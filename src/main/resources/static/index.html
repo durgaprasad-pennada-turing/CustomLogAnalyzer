@@ -3,212 +3,253 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Custom Log Analyzer Client</title>
+    <title>Multi-Stage Log Analyzer</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* Custom styles for aesthetic font and text area sizing */
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #f3f4f6;
-        }
-        textarea {
-            resize: none;
-            min-height: 150px;
-        }
-        .summary-output {
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
+        /* Custom scrollbar for textareas */
+        textarea::-webkit-scrollbar { width: 6px; }
+        textarea::-webkit-scrollbar-thumb { background-color: #6366f1; border-radius: 3px; }
+        textarea::-webkit-scrollbar-track { background-color: #f1f5f9; }
+
+        /* Use Inter font */
+        body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; }
     </style>
-</head>
-<body class="p-4 sm:p-8">
-
-    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-6 md:p-10">
-        <header class="mb-8 border-b pb-4">
-            <h1 class="text-3xl font-extrabold text-gray-900 flex items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 mr-3 text-indigo-600">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.232 4.125c.789-0.556 1.697-1.023 2.87-1.023h.375M17.5 16.5H19.5M3.75 12H6m-2.25 4.5H6M3.75 7.5H6m6 6v.75m6-6v.75m-6-6h.008v.008H12zM12 21h.008v.008H12z" />
-                </svg>
-                Custom Log Analyzer
-            </h1>
-            <p class="text-gray-500 mt-2">Check log content against a list of test case patterns.</p>
-        </header>
-
-        <main class="space-y-6">
-            <!-- Input Area -->
-            <div class="grid md:grid-cols-2 gap-6">
-                <!-- Test Cases Input -->
-                <div>
-                    <label for="testCaseInput" class="block text-sm font-medium text-gray-700 mb-2">Test Cases (Separate by newline, comma, or semicolon)</label>
-                    <textarea id="testCaseInput" 
-                              class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" 
-                              placeholder="e.g.,&#10;TestA&#10;TestB, FAIL_Scenario"
-                    >TestA
-TestB
-TestC</textarea>
-                </div>
-
-                <!-- Log Content Input -->
-                <div>
-                    <label for="logContent" class="block text-sm font-medium text-gray-700 mb-2">Log Content</label>
-                    <textarea id="logContent" 
-                              class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" 
-                              placeholder="Paste your full log content here..."
-                    >2024-10-31 INFO: Starting analysis.
-2024-10-31 SUCCESS: TestA completed.
-2024-10-31 ERROR: TestB FAILED due to timeout.
-2024-10-31 DEBUG: Cleanup completed. TestD is irrelevant.
-</textarea>
-                </div>
-            </div>
-
-            <!-- Analyze Button -->
-            <div class="flex justify-center pt-4">
-                <button onclick="runAnalysis()" id="analyzeButton"
-                        class="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-full shadow-lg hover:bg-indigo-700 transition duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50">
-                    Analyze Logs
-                </button>
-            </div>
-
-            <!-- Results Area -->
-            <div id="resultsContainer" class="mt-8 pt-6 border-t border-gray-200">
-                <h2 class="text-2xl font-semibold text-gray-800 mb-4">Analysis Summary</h2>
-                <pre id="analysisSummary" class="bg-gray-50 border border-gray-200 p-4 rounded-lg summary-output text-sm text-gray-700 min-h-[100px]">
-Click 'Analyze Logs' to view the results.
-</pre>
-            </div>
-
-            <!-- Message Box for Alerts -->
-            <div id="messageBox" class="hidden fixed bottom-5 right-5 p-4 rounded-lg shadow-2xl transition-opacity duration-300 z-50"></div>
-
-        </main>
-    </div>
-
     <script>
-        // --- CORE ANALYSIS LOGIC (MOCK BACKEND) ---
+        // Use a simple map to store results grouped by log source for better display
+        let groupedResults = {};
 
         /**
-         * Splits a multi-line/comma-separated input string into a list of clean test case names.
+         * Runs the analysis by collecting data from all six inputs and sending it to the backend.
          */
-        function splitInput(input) {
-            if (!input || input.trim() === '') {
-                return [];
-            }
+        async function runAnalysis() {
+            const resultDiv = document.getElementById('results');
+            const statusDiv = document.getElementById('status-message');
             
-            // Replace all delimiters (newline, comma, semicolon) with a single comma
-            const cleanedInput = input.replace(/[\n\r;,]/g, ',');
-            
-            // Split by comma, trim, and filter out any empty strings
-            return cleanedInput.split(',')
-                               .map(s => s.trim())
-                               .filter(s => s !== '');
-        }
+            // Clear previous results and show loading status
+            resultDiv.innerHTML = '';
+            groupedResults = {};
+            statusDiv.textContent = 'Running analysis...';
+            statusDiv.classList.remove('text-red-600', 'text-green-600');
+            statusDiv.classList.add('text-indigo-600');
+            document.getElementById('analysis-button').disabled = true;
 
-        /**
-         * Performs the case-insensitive log analysis.
-         */
-        function analyzeLogs(testCaseInput, logContent) {
-            const testCaseNames = splitInput(testCaseInput);
-            const results = [];
-            
-            if (testCaseNames.length === 0) {
-                // System check error for missing input
-                return [{ 
-                    name: "SystemCheck", 
-                    summary: "SystemCheck: ERROR (No test cases provided for analysis.)" 
-                }];
-            }
-
-            // Pre-process the entire log file to lower case once
-            const lowerCaseLog = logContent.toLowerCase();
-
-            for (const testName of testCaseNames) {
-                const lowerCaseTestName = testName.toLowerCase();
+            const requestBody = {
+                // Collect all 4 log inputs
+                baseLog: document.getElementById('base_log').value,
+                beforeLog: document.getElementById('before_log').value,
+                afterLog: document.getElementById('after_log').value,
+                postAgentPatchLog: document.getElementById('post_agent_patch_log').value,
                 
-                // Case-insensitive search
-                const found = lowerCaseLog.includes(lowerCaseTestName);
+                // Collect all 2 test list inputs
+                mainJsonTests: document.getElementById('main_json_tests').value,
+                reportJsonTests: document.getElementById('report_json_tests').value,
+            };
 
-                // Format the result to match the required concise output
-                const summary = formatResult(testName, found);
-                
-                results.push({
-                    name: testName,
-                    found: found,
-                    summary: summary
-                });
-            }
+            try {
+                // Use exponential backoff for a robust API call
+                const maxRetries = 3;
+                let response;
 
-            return results;
-        }
+                for (let i = 0; i < maxRetries; i++) {
+                    response = await fetch('/api/analysis/run', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody)
+                    });
 
-        /**
-         * Formats the result string into the required concise output: TestName: STATUS (Found/Not Found).
-         */
-        function formatResult(testName, found) {
-            const status = found ? "OK" : "NOT OK";
-            const resultType = found ? "Found" : "Not Found";
-            return `${testName}: ${status} (${resultType})`;
-        }
+                    if (response.ok) {
+                        break;
+                    }
 
-        // --- UI INTERACTION LOGIC ---
-
-        const testCaseInputEl = document.getElementById('testCaseInput');
-        const logContentEl = document.getElementById('logContent');
-        const summaryOutputEl = document.getElementById('analysisSummary');
-        const analyzeButton = document.getElementById('analyzeButton');
-        const messageBox = document.getElementById('messageBox');
-
-        /**
-         * Displays a temporary message box.
-         */
-        function showMessage(text, isError = false) {
-            messageBox.textContent = text;
-            messageBox.className = `fixed bottom-5 right-5 p-4 rounded-lg shadow-2xl transition-opacity duration-300 z-50 ${isError ? 'bg-red-500 text-white' : 'bg-green-500 text-white'}`;
-            messageBox.style.opacity = '1';
-            
-            setTimeout(() => {
-                messageBox.style.opacity = '0';
-                setTimeout(() => messageBox.classList.add('hidden'), 300);
-            }, 3000);
-            messageBox.classList.remove('hidden');
-        }
-
-        /**
-         * Main function to run the analysis when the button is clicked.
-         */
-        function runAnalysis() {
-            const testCaseInput = testCaseInputEl.value;
-            const logContent = logContentEl.value;
-            
-            if (!testCaseInput || !logContent) {
-                showMessage("Please provide both Test Cases and Log Content.", true);
-                return;
-            }
-
-            // Show loading state
-            analyzeButton.textContent = "Analyzing...";
-            analyzeButton.disabled = true;
-
-            // Simulate service processing delay
-            setTimeout(() => {
-                const results = analyzeLogs(testCaseInput, logContent);
-                
-                let output = "--- Analysis Summary ---\n";
-                
-                if (results.length > 0) {
-                    output += results.map(r => r.summary).join('\n');
+                    if (i < maxRetries - 1) {
+                        const delay = Math.pow(2, i) * 1000;
+                        console.warn(`Request failed. Retrying in ${delay}ms...`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        throw new Error(`Failed to fetch results after ${maxRetries} attempts.`);
+                    }
                 }
 
-                summaryOutputEl.textContent = output;
+                if (!response || !response.ok) {
+                    throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
+                }
+
+                const results = await response.json();
                 
-                // Restore button state
-                analyzeButton.textContent = "Analyze Logs";
-                analyzeButton.disabled = false;
-                
-                showMessage("Analysis complete!");
-            }, 300); // Simulate network latency/processing time
+                statusDiv.textContent = `Analysis complete. Found ${results.length} total results.`;
+                statusDiv.classList.remove('text-indigo-600');
+                statusDiv.classList.add('text-green-600');
+
+                displayResults(results);
+
+            } catch (error) {
+                console.error("Analysis failed:", error);
+                statusDiv.textContent = `Analysis failed: ${error.message}`;
+                statusDiv.classList.remove('text-indigo-600');
+                statusDiv.classList.add('text-red-600');
+            } finally {
+                document.getElementById('analysis-button').disabled = false;
+            }
         }
+
+        /**
+         * Displays the results, grouping them by log source for clarity.
+         */
+        function displayResults(results) {
+            const resultDiv = document.getElementById('results');
+            resultDiv.innerHTML = ''; // Clear existing content
+
+            // Group results by logSource (e.g., "base_log", "before_log")
+            results.forEach(result => {
+                const source = result.logSource;
+                if (!groupedResults[source]) {
+                    groupedResults[source] = [];
+                }
+                groupedResults[source].push(result);
+            });
+
+            // Map keys (logSource) to display titles
+            const sourceTitles = {
+                "base_log": "Base Log Analysis",
+                "before_log": "Before Log Analysis",
+                "after_log": "After Log Analysis",
+                "post_agent_patch_log": "Post Agent Patch Log Analysis",
+                "N/A": "System Error"
+            };
+
+            // Order the display based on the defined order
+            const orderedSources = ["base_log", "before_log", "after_log", "post_agent_patch_log", "N/A"];
+
+            orderedSources.forEach(source => {
+                const resultsForSource = groupedResults[source];
+
+                if (resultsForSource && resultsForSource.length > 0) {
+                    // Create section header
+                    const header = document.createElement('h3');
+                    header.className = 'text-lg font-bold mt-6 mb-2 border-b-2 border-indigo-200 pb-1 text-indigo-700';
+                    header.textContent = sourceTitles[source] || source;
+                    resultDiv.appendChild(header);
+
+                    // Create list for results
+                    const ul = document.createElement('ul');
+                    ul.className = 'space-y-1';
+                    
+                    resultsForSource.forEach(result => {
+                        const li = document.createElement('li');
+                        li.className = 'p-2 rounded-lg text-sm transition duration-150 ease-in-out flex justify-between items-center';
+
+                        const isOk = result.result === 'Found';
+                        const isError = result.result === 'Error';
+
+                        let statusText = result.summary;
+                        let statusClass = 'bg-gray-100 text-gray-800';
+
+                        if (isOk) {
+                            statusClass = 'bg-green-100 text-green-800 font-medium';
+                        } else if (isError) {
+                            statusClass = 'bg-red-200 text-red-900 font-bold';
+                        } else {
+                            // NOT OK (NotFound)
+                            statusClass = 'bg-yellow-100 text-yellow-800 font-medium';
+                        }
+                        
+                        li.className += ' ' + statusClass;
+                        li.textContent = statusText;
+
+                        ul.appendChild(li);
+                    });
+
+                    resultDiv.appendChild(ul);
+                }
+            });
+        }
+        
+        // Populate placeholder content for demonstration
+        window.onload = () => {
+             document.getElementById('base_log').value = "Starting up service...\nFound TestA in base log\nSkipping TestD.";
+             document.getElementById('before_log').value = "Service running.\nTestB started.\nTestC failed to execute.";
+             document.getElementById('after_log').value = "Found TestA in after log\nTestB success.";
+             document.getElementById('post_agent_patch_log').value = "Agent patch applied.\nFound ReportTestD\nAgent shutdown successful.";
+             document.getElementById('main_json_tests').value = "TestA\nTestB\nTestC";
+             document.getElementById('report_json_tests').value = "ReportTestD\nReportTestE";
+        };
+
     </script>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto bg-white p-6 md:p-10 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-extrabold text-indigo-700 mb-6 border-b pb-2">Multi-Stage Log Analyzer</h1>
+        <p class="text-gray-600 mb-8">
+            Enter your four log files and two test lists below. The system will currently perform a **full cross-validation** (Issue 1) of all tests against all logs.
+        </p>
+
+        <!-- Input Section -->
+        <div class="space-y-6">
+            <h2 class="text-xl font-semibold text-gray-700">Log Contents (4 Files)</h2>
+            <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <!-- Log File 1 -->
+                <div class="col-span-1">
+                    <label for="base_log" class="block text-sm font-medium text-gray-700 mb-1">Base Log</label>
+                    <textarea id="base_log" rows="6" class="w-full p-3 border border-gray-300 rounded-lg shadow-inner focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"></textarea>
+                </div>
+
+                <!-- Log File 2 -->
+                <div class="col-span-1">
+                    <label for="before_log" class="block text-sm font-medium text-gray-700 mb-1">Before Log</label>
+                    <textarea id="before_log" rows="6" class="w-full p-3 border border-gray-300 rounded-lg shadow-inner focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"></textarea>
+                </div>
+
+                <!-- Log File 3 -->
+                <div class="col-span-1">
+                    <label for="after_log" class="block text-sm font-medium text-gray-700 mb-1">After Log</label>
+                    <textarea id="after_log" rows="6" class="w-full p-3 border border-gray-300 rounded-lg shadow-inner focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"></textarea>
+                </div>
+
+                <!-- Log File 4 -->
+                <div class="col-span-1">
+                    <label for="post_agent_patch_log" class="block text-sm font-medium text-gray-700 mb-1">Post Agent Patch Log</label>
+                    <textarea id="post_agent_patch_log" rows="6" class="w-full p-3 border border-gray-300 rounded-lg shadow-inner focus:ring-indigo-500 focus:border-indigo-500 transition duration-150"></textarea>
+                </div>
+            </div>
+
+            <h2 class="text-xl font-semibold text-gray-700 pt-4">Test Cases (2 Sets)</h2>
+            <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <!-- Test Set 1 -->
+                <div class="col-span-1">
+                    <label for="main_json_tests" class="block text-sm font-medium text-gray-700 mb-1">Main JSON Tests (TestA, TestB, ...)</label>
+                    <textarea id="main_json_tests" rows="4" class="w-full p-3 border border-gray-300 rounded-lg shadow-inner focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" placeholder="Enter test names separated by newlines or commas."></textarea>
+                </div>
+                
+                <!-- Test Set 2 -->
+                <div class="col-span-1">
+                    <label for="report_json_tests" class="block text-sm font-medium text-gray-700 mb-1">Report JSON Tests (TestD, TestE, ...)</label>
+                    <textarea id="report_json_tests" rows="4" class="w-full p-3 border border-gray-300 rounded-lg shadow-inner focus:ring-indigo-500 focus:border-indigo-500 transition duration-150" placeholder="Enter test names separated by newlines or commas."></textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- Action Button -->
+        <div class="mt-8 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+            <button 
+                id="analysis-button"
+                onclick="runAnalysis()"
+                class="w-full sm:w-auto px-6 py-3 bg-indigo-600 text-white font-semibold rounded-xl shadow-lg hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50 transition duration-200 ease-in-out transform hover:scale-[1.02] active:scale-[0.98]"
+            >
+                Run Analysis
+            </button>
+            <div id="status-message" class="mt-4 sm:mt-0 text-gray-500 font-medium">Ready to analyze.</div>
+        </div>
+
+        <!-- Results Section -->
+        <div class="mt-12">
+            <h2 class="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">Analysis Results</h2>
+            <div id="results" class="bg-gray-50 p-4 rounded-lg min-h-[100px] shadow-inner">
+                <p class="text-gray-400 italic">Results will appear here after analysis.</p>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

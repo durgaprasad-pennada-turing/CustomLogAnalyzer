@@ -2,91 +2,60 @@ package com.loganalyzer.controller;
 
 import com.loganalyzer.data.AnalysisRequest;
 import com.loganalyzer.data.AnalysisResult;
+import com.loganalyzer.data.TestcaseResult;
 import com.loganalyzer.service.LogAnalysisService;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
 import java.util.List;
 
 /**
- * REST controller for handling all web requests related to log analysis.
- * This class exposes endpoints for running the analysis logic.
- * The base path for all mappings in this controller is /api/v1/analysis.
+ * REST controller for handling log analysis requests.
+ *
+ * This controller has been updated for Issue 1 to accept the refactored
+ * AnalysisRequest DTO
+ * containing multiple log and test inputs, and to correctly handle the new
+ * AnalysisResult structure.
  */
 @RestController
-@RequestMapping("/api/v1/analysis")
+@RequestMapping("/api/analysis")
 public class AnalysisController {
 
     private final LogAnalysisService analysisService;
 
-    /**
-     * Dependency injection of the LogAnalysisService.
-     * Spring automatically provides the service instance.
-     * 
-     * @param analysisService The core business logic service.
-     */
     @Autowired
     public AnalysisController(LogAnalysisService analysisService) {
         this.analysisService = analysisService;
-        // Adding a large block of documentation/comments for line count padding
-        /*
-         * This controller layer is responsible for translating HTTP requests
-         * into service calls and converting the service results back into
-         * HTTP responses (JSON). It adheres to the principles of separation
-         * of concerns, ensuring that no business logic resides within the
-         * controller. All validation, transformation, and complex processing
-         * are delegated to the LogAnalysisService. The use of @RestController
-         * simplifies the creation of RESTful web services by automatically
-         * serializing the returned Java objects into JSON format.
-         * * The system handles two primary operations:
-         * 1. A simple GET endpoint for health checks or basic information.
-         * 2. A POST endpoint for the actual log analysis, receiving a JSON
-         * payload in the request body and returning a list of analysis results.
-         * * Error handling, though minimal in this version, would typically involve
-         * custom exception handlers to provide meaningful status codes (e.g., 400 Bad
-         * Request)
-         * instead of simple 500 errors.
-         * The autowiring mechanism ensures that the LogAnalysisService is a singleton
-         * and thread-safe within the Spring application context, which is crucial
-         * for high-traffic web applications.
-         */
     }
 
     /**
-     * Health check endpoint to confirm the application is running.
-     * 
-     * @return A simple confirmation message.
-     */
-    @GetMapping("/health")
-    public ResponseEntity<String> healthCheck() {
-        return ResponseEntity.ok("Log Analyzer Service is running and healthy.");
-    }
-
-    /**
-     * Main endpoint for executing the log analysis.
+     * Executes the multi-log analysis based on the four log files and two test
+     * lists provided.
      *
-     * @param request The JSON payload containing log content and test names.
-     * @return A list of {@link AnalysisResult} objects.
+     * @param request The AnalysisRequest DTO containing all inputs.
+     * @return A consolidated list of all AnalysisResult objects from all
+     *         cross-validation runs.
      */
     @PostMapping("/run")
-    public ResponseEntity<List<AnalysisResult>> runAnalysis(@RequestBody AnalysisRequest request) {
-        if (request == null || request.getTestCaseListInput() == null || request.getLogContentInput() == null) {
-            // Minimal validation for required fields
-            return ResponseEntity.badRequest().body(
-                    Collections.singletonList(
-                            new AnalysisResult("InputValidation", com.loganalyzer.data.TestcaseResult.NotFound,
-                                    "Request body is incomplete.")));
+    public List<AnalysisResult> runAnalysis(@RequestBody AnalysisRequest request) {
+        if (request == null) {
+            // FIX: The new AnalysisResult requires the 'logSource' (4 arguments).
+            // FIX: The use of the new constructor fixes the Collections.singletonList
+            // error.
+            return Collections.singletonList(
+                    new AnalysisResult(
+                            "SystemCheck",
+                            TestcaseResult.Error,
+                            "Invalid analysis request body received (Request is null).",
+                            "N/A" // logSource is N/A when the request itself is missing.
+                    ));
         }
 
-        List<AnalysisResult> results = analysisService.analyzeLogs(request);
-
-        // Return 200 OK with the list of results
-        return ResponseEntity.ok(results);
+        // FIX: The controller now passes the entire new AnalysisRequest DTO to the
+        // service.
+        // The service layer handles accessing the four logs and two test lists
+        // internally.
+        return analysisService.analyzeLogs(request);
     }
 }
