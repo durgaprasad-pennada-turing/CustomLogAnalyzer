@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Custom Log Analyzer Client</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for aesthetic font and text area sizing */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        textarea {
+            resize: none;
+            min-height: 150px;
+        }
+        .summary-output {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white shadow-xl rounded-xl p-6 md:p-10">
+        <header class="mb-8 border-b pb-4">
+            <h1 class="text-3xl font-extrabold text-gray-900 flex items-center">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-8 h-8 mr-3 text-indigo-600">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m5.232 4.125c.789-0.556 1.697-1.023 2.87-1.023h.375M17.5 16.5H19.5M3.75 12H6m-2.25 4.5H6M3.75 7.5H6m6 6v.75m6-6v.75m-6-6h.008v.008H12zM12 21h.008v.008H12z" />
+                </svg>
+                Custom Log Analyzer
+            </h1>
+            <p class="text-gray-500 mt-2">Check log content against a list of test case patterns.</p>
+        </header>
+
+        <main class="space-y-6">
+            <!-- Input Area -->
+            <div class="grid md:grid-cols-2 gap-6">
+                <!-- Test Cases Input -->
+                <div>
+                    <label for="testCaseInput" class="block text-sm font-medium text-gray-700 mb-2">Test Cases (Separate by newline, comma, or semicolon)</label>
+                    <textarea id="testCaseInput" 
+                              class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" 
+                              placeholder="e.g.,&#10;TestA&#10;TestB, FAIL_Scenario"
+                    >TestA
+TestB
+TestC</textarea>
+                </div>
+
+                <!-- Log Content Input -->
+                <div>
+                    <label for="logContent" class="block text-sm font-medium text-gray-700 mb-2">Log Content</label>
+                    <textarea id="logContent" 
+                              class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" 
+                              placeholder="Paste your full log content here..."
+                    >2024-10-31 INFO: Starting analysis.
+2024-10-31 SUCCESS: TestA completed.
+2024-10-31 ERROR: TestB FAILED due to timeout.
+2024-10-31 DEBUG: Cleanup completed. TestD is irrelevant.
+</textarea>
+                </div>
+            </div>
+
+            <!-- Analyze Button -->
+            <div class="flex justify-center pt-4">
+                <button onclick="runAnalysis()" id="analyzeButton"
+                        class="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-full shadow-lg hover:bg-indigo-700 transition duration-150 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-indigo-500 focus:ring-opacity-50">
+                    Analyze Logs
+                </button>
+            </div>
+
+            <!-- Results Area -->
+            <div id="resultsContainer" class="mt-8 pt-6 border-t border-gray-200">
+                <h2 class="text-2xl font-semibold text-gray-800 mb-4">Analysis Summary</h2>
+                <pre id="analysisSummary" class="bg-gray-50 border border-gray-200 p-4 rounded-lg summary-output text-sm text-gray-700 min-h-[100px]">
+Click 'Analyze Logs' to view the results.
+</pre>
+            </div>
+
+            <!-- Message Box for Alerts -->
+            <div id="messageBox" class="hidden fixed bottom-5 right-5 p-4 rounded-lg shadow-2xl transition-opacity duration-300 z-50"></div>
+
+        </main>
+    </div>
+
+    <script>
+        // --- CORE ANALYSIS LOGIC (MOCK BACKEND) ---
+
+        /**
+         * Splits a multi-line/comma-separated input string into a list of clean test case names.
+         */
+        function splitInput(input) {
+            if (!input || input.trim() === '') {
+                return [];
+            }
+            
+            // Replace all delimiters (newline, comma, semicolon) with a single comma
+            const cleanedInput = input.replace(/[\n\r;,]/g, ',');
+            
+            // Split by comma, trim, and filter out any empty strings
+            return cleanedInput.split(',')
+                               .map(s => s.trim())
+                               .filter(s => s !== '');
+        }
+
+        /**
+         * Performs the case-insensitive log analysis.
+         */
+        function analyzeLogs(testCaseInput, logContent) {
+            const testCaseNames = splitInput(testCaseInput);
+            const results = [];
+            
+            if (testCaseNames.length === 0) {
+                // System check error for missing input
+                return [{ 
+                    name: "SystemCheck", 
+                    summary: "SystemCheck: ERROR (No test cases provided for analysis.)" 
+                }];
+            }
+
+            // Pre-process the entire log file to lower case once
+            const lowerCaseLog = logContent.toLowerCase();
+
+            for (const testName of testCaseNames) {
+                const lowerCaseTestName = testName.toLowerCase();
+                
+                // Case-insensitive search
+                const found = lowerCaseLog.includes(lowerCaseTestName);
+
+                // Format the result to match the required concise output
+                const summary = formatResult(testName, found);
+                
+                results.push({
+                    name: testName,
+                    found: found,
+                    summary: summary
+                });
+            }
+
+            return results;
+        }
+
+        /**
+         * Formats the result string into the required concise output: TestName: STATUS (Found/Not Found).
+         */
+        function formatResult(testName, found) {
+            const status = found ? "OK" : "NOT OK";
+            const resultType = found ? "Found" : "Not Found";
+            return `${testName}: ${status} (${resultType})`;
+        }
+
+        // --- UI INTERACTION LOGIC ---
+
+        const testCaseInputEl = document.getElementById('testCaseInput');
+        const logContentEl = document.getElementById('logContent');
+        const summaryOutputEl = document.getElementById('analysisSummary');
+        const analyzeButton = document.getElementById('analyzeButton');
+        const messageBox = document.getElementById('messageBox');
+
+        /**
+         * Displays a temporary message box.
+         */
+        function showMessage(text, isError = false) {
+            messageBox.textContent = text;
+            messageBox.className = `fixed bottom-5 right-5 p-4 rounded-lg shadow-2xl transition-opacity duration-300 z-50 ${isError ? 'bg-red-500 text-white' : 'bg-green-500 text-white'}`;
+            messageBox.style.opacity = '1';
+            
+            setTimeout(() => {
+                messageBox.style.opacity = '0';
+                setTimeout(() => messageBox.classList.add('hidden'), 300);
+            }, 3000);
+            messageBox.classList.remove('hidden');
+        }
+
+        /**
+         * Main function to run the analysis when the button is clicked.
+         */
+        function runAnalysis() {
+            const testCaseInput = testCaseInputEl.value;
+            const logContent = logContentEl.value;
+            
+            if (!testCaseInput || !logContent) {
+                showMessage("Please provide both Test Cases and Log Content.", true);
+                return;
+            }
+
+            // Show loading state
+            analyzeButton.textContent = "Analyzing...";
+            analyzeButton.disabled = true;
+
+            // Simulate service processing delay
+            setTimeout(() => {
+                const results = analyzeLogs(testCaseInput, logContent);
+                
+                let output = "--- Analysis Summary ---\n";
+                
+                if (results.length > 0) {
+                    output += results.map(r => r.summary).join('\n');
+                }
+
+                summaryOutputEl.textContent = output;
+                
+                // Restore button state
+                analyzeButton.textContent = "Analyze Logs";
+                analyzeButton.disabled = false;
+                
+                showMessage("Analysis complete!");
+            }, 300); // Simulate network latency/processing time
+        }
+    </script>
+</body>
+</html>
