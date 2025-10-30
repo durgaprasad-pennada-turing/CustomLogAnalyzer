@@ -28,7 +28,7 @@ To set up, build, and run this project, you need the following installed:
 
 1. **Clone the Repository:**
    ```bash
-   git clone https://github.com/YourUsername/CustomLogAnalyzer.git
+   git clone https://github.com/durgaprasad-pennada-turing/CustomLogAnalyzer.git
    cd CustomLogAnalyzer
    ```
 
