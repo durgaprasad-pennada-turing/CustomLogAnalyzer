@@ -2,16 +2,16 @@ package com.loganalyzer.data;
 
 /**
  * Data Transfer Object (DTO) holding the result of a single test case analysis.
- * The message and summary fields are now simplified to produce the exact
- * desired output format.
+ * Now includes 'logSource' to identify which log file the result is derived
+ * from.
  */
 public class AnalysisResult {
 
     private final String testCaseName;
     private final TestcaseResult result;
-    private final String message; // Simplified to just "Found" or "Not Found"
+    private final String message;
     private final String summary;
-    private final String logSnippet;
+    private final String logSource; // NEW: Identifies which log file was analyzed (e.g., "base_log")
 
     /**
      * Constructs a new AnalysisResult.
@@ -20,48 +20,41 @@ public class AnalysisResult {
      * @param result        The final status (Found, NotFound, or Error).
      * @param customMessage A custom message, typically only used for SystemCheck
      *                      errors.
+     * @param logSource     The label of the log file that was analyzed.
      */
-    public AnalysisResult(String testCaseName, TestcaseResult result, String customMessage) {
+    public AnalysisResult(String testCaseName, TestcaseResult result, String customMessage, String logSource) {
         this.testCaseName = testCaseName;
         this.result = result;
-        this.logSnippet = null;
+        this.logSource = logSource;
 
         // If it's a system error, use the custom message directly
         if (result == TestcaseResult.Error) {
             this.message = customMessage;
-            this.summary = formatErrorSummary(testCaseName, customMessage);
+            this.summary = formatErrorSummary(testCaseName, customMessage, logSource);
         } else {
-            // For standard Found/NotFound cases
+            // For standard Found/NotFound cases, use simplified formatting
             this.message = formatStandardMessage(result);
-            this.summary = formatStandardSummary(testCaseName, result);
+            this.summary = formatStandardSummary(testCaseName, result, logSource);
         }
     }
 
     // --- Standard Formatting Methods (Found/NotFound) ---
 
-    /**
-     * Generates a concise message, expected to be the content inside the
-     * parentheses
-     * in the final output: "Found" or "Not Found".
-     */
     private String formatStandardMessage(TestcaseResult result) {
-        if (result == TestcaseResult.Found) {
-            return "Found";
-        } else {
-            return "Not Found";
-        }
+        return result == TestcaseResult.Found ? "Found" : "Not Found";
     }
 
     /**
-     * Generates the concise summary for Found/NotFound cases.
-     * Format: TestName: STATUS (ResultType) -> e.g., TestA: OK (Found)
+     * Generates the concise summary for Found/NotFound cases, including the log
+     * source.
+     * Format: TestName [Source]: STATUS (ResultType)
      */
-    private String formatStandardSummary(String testCaseName, TestcaseResult result) {
+    private String formatStandardSummary(String testCaseName, TestcaseResult result, String logSource) {
         String status = result == TestcaseResult.Found ? "OK" : "NOT OK";
         String resultType = result == TestcaseResult.Found ? "Found" : "Not Found";
 
-        // This is the desired final output string
-        return String.format("%s: %s (%s)", testCaseName, status, resultType);
+        // Output now includes the log source for clarity in multi-log analysis
+        return String.format("%s [%s]: %s (%s)", testCaseName, logSource, status, resultType);
     }
 
     // --- Error Formatting Method ---
@@ -69,9 +62,9 @@ public class AnalysisResult {
     /**
      * Generates a summary for system errors.
      */
-    private String formatErrorSummary(String testCaseName, String customMessage) {
-        // Output format for errors: SystemCheck: ERROR (Custom Error Message)
-        return String.format("%s: ERROR (%s)", testCaseName, customMessage);
+    private String formatErrorSummary(String testCaseName, String customMessage, String logSource) {
+        // Output format for errors: SystemCheck [Source]: ERROR (Custom Error Message)
+        return String.format("%s [%s]: ERROR (%s)", testCaseName, logSource, customMessage);
     }
 
     // --- Getters ---
@@ -92,11 +85,15 @@ public class AnalysisResult {
         return message;
     }
 
+    public String getLogSource() {
+        return logSource;
+    }
+
     public boolean isFound() {
         return result == TestcaseResult.Found;
     }
 
-    // --- Object Overrides ---
+    // --- Object Overrides (Must include logSource for accurate comparison) ---
 
     @Override
     public boolean equals(Object o) {
@@ -109,6 +106,8 @@ public class AnalysisResult {
 
         if (!testCaseName.equals(that.testCaseName))
             return false;
+        if (!logSource.equals(that.logSource))
+            return false;
         return result == that.result;
     }
 
@@ -116,6 +115,7 @@ public class AnalysisResult {
     public int hashCode() {
         int result1 = testCaseName.hashCode();
         result1 = 31 * result1 + result.hashCode();
+        result1 = 31 * result1 + logSource.hashCode();
         return result1;
     }
 
@@ -123,6 +123,7 @@ public class AnalysisResult {
     public String toString() {
         return "AnalysisResult{" +
                 "testCaseName='" + testCaseName + '\'' +
+                ", logSource='" + logSource + '\'' +
                 ", result=" + result +
                 ", summary='" + summary + '\'' +
                 '}';

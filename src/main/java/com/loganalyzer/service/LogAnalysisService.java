@@ -8,45 +8,95 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Core business logic service for analyzing log files against a list of test
- * cases.
+ * Core business logic service for analyzing multiple log files against two
+ * distinct sets of test cases.
  *
- * Implements case-insensitive matching for robust analysis.
- * This service is responsible for parsing inputs and generating structured
- * analysis results.
+ * Implements case-insensitive matching and enforces the temporary rule of full
+ * cross-validation
+ * (all tests checked against all four logs) for Issue 1.
  */
 @Service
 public class LogAnalysisService {
 
+    private static final String SYSTEM_CHECK_NAME = "SystemCheck";
+    private static final String NO_TESTS_MSG = "No test cases provided for analysis in this set.";
+    private static final String INVALID_REQUEST_MSG = "Invalid analysis request received (request object is null).";
+
     /**
-     * Analyzes log content against provided test case names.
+     * Orchestrates the analysis across multiple log files and two test sets based
+     * on the Issue 1 rule
+     * (Full Cross-Validation: All tests vs. All logs).
      *
-     * @param request The {@link AnalysisRequest} containing the test case list and
-     *                log content.
-     * @return A list of {@link AnalysisResult} for each test case.
+     * @param request The {@link AnalysisRequest} containing the four logs and two
+     *                test lists.
+     * @return A consolidated list of {@link AnalysisResult} for all executed
+     *         checks.
      */
     public List<AnalysisResult> analyzeLogs(AnalysisRequest request) {
         final List<AnalysisResult> results = new ArrayList<>();
 
-        if (request == null || request.getTestCaseListInput() == null || request.getLogContentInput() == null) {
-            // Handle invalid/null request gracefully
-            results.add(new AnalysisResult("SystemCheck", TestcaseResult.Error, "Invalid request received."));
+        if (request == null) {
+            // Updated to pass N/A for logSource in a system-level error
+            results.add(new AnalysisResult(SYSTEM_CHECK_NAME, TestcaseResult.Error, INVALID_REQUEST_MSG, "N/A"));
             return results;
         }
 
-        final String testCaseInput = request.getTestCaseListInput();
-        final String logContent = request.getLogContentInput();
+        // Define all 4 log sources and content
+        List<LogAnalysisTask> allLogTasks = new ArrayList<>();
+        allLogTasks.add(new LogAnalysisTask(request.getMainJsonTests(), request.getBaseLog(), "base_log"));
+        allLogTasks.add(new LogAnalysisTask(request.getMainJsonTests(), request.getBeforeLog(), "before_log"));
+        allLogTasks.add(new LogAnalysisTask(request.getMainJsonTests(), request.getAfterLog(), "after_log"));
+        allLogTasks.add(new LogAnalysisTask(request.getMainJsonTests(), request.getPostAgentPatchLog(),
+                "post_agent_patch_log"));
+
+        // Define all 4 log sources, but using the report tests input
+        List<LogAnalysisTask> reportLogTasks = new ArrayList<>();
+        reportLogTasks.add(new LogAnalysisTask(request.getReportJsonTests(), request.getBaseLog(), "base_log"));
+        reportLogTasks.add(new LogAnalysisTask(request.getReportJsonTests(), request.getBeforeLog(), "before_log"));
+        reportLogTasks.add(new LogAnalysisTask(request.getReportJsonTests(), request.getAfterLog(), "after_log"));
+        reportLogTasks.add(new LogAnalysisTask(request.getReportJsonTests(), request.getPostAgentPatchLog(),
+                "post_agent_patch_log"));
+
+        // Execute analysis for ALL Main JSON Tests against ALL 4 logs
+        for (LogAnalysisTask task : allLogTasks) {
+            results.addAll(executeAnalysisForTestSet(task.testCaseInput, task.logContent, task.logSource));
+        }
+
+        // Execute analysis for ALL Report JSON Tests against ALL 4 logs
+        for (LogAnalysisTask task : reportLogTasks) {
+            results.addAll(executeAnalysisForTestSet(task.testCaseInput, task.logContent, task.logSource));
+        }
+
+        return results;
+    }
+
+    /**
+     * Executes a single analysis task for a given test set against one log file.
+     * This is the core logic that will be maintained.
+     */
+    private List<AnalysisResult> executeAnalysisForTestSet(String testCaseInput, String logContent, String logSource) {
+        List<AnalysisResult> taskResults = new ArrayList<>();
+
+        if (logContent == null) {
+            taskResults.add(
+                    new AnalysisResult(SYSTEM_CHECK_NAME, TestcaseResult.Error, "Log content is missing.", logSource));
+            return taskResults;
+        }
+
+        if (testCaseInput == null || testCaseInput.trim().isEmpty()) {
+            // If the test input is empty, we return an empty list of results (no checks to
+            // perform).
+            return List.of();
+        }
 
         List<String> testCaseNames = splitInput(testCaseInput);
 
         if (testCaseNames.isEmpty()) {
-            results.add(
-                    new AnalysisResult("SystemCheck", TestcaseResult.Error, "No test cases provided for analysis."));
-            return results;
+            // If no test cases remain after splitting and trimming
+            return List.of();
         }
 
         // Pre-process the entire log file to lower case once for efficiency
@@ -66,17 +116,16 @@ public class LogAnalysisService {
 
             TestcaseResult result = found ? TestcaseResult.Found : TestcaseResult.NotFound;
 
-            // Generate the final result object with simplified message/summary
-            results.add(new AnalysisResult(cleanTestName, result, null));
+            // Generate the final result object, passing null for custom message
+            taskResults.add(new AnalysisResult(cleanTestName, result, null, logSource));
         }
 
-        return results;
+        return taskResults;
     }
 
     /**
      * Splits a multi-line/comma-separated input string into a list of clean test
      * case names.
-     * Supports newline, carriage return, comma, and semicolon delimiters.
      */
     private List<String> splitInput(String input) {
         if (input == null || input.trim().isEmpty()) {
@@ -98,5 +147,20 @@ public class LogAnalysisService {
      */
     private String cleanString(String input) {
         return input != null ? input.trim() : "";
+    }
+
+    /**
+     * Simple internal record to manage a single analysis execution run.
+     */
+    private static class LogAnalysisTask {
+        final String testCaseInput;
+        final String logContent;
+        final String logSource; // e.g., "base_log"
+
+        LogAnalysisTask(String testCaseInput, String logContent, String logSource) {
+            this.testCaseInput = testCaseInput;
+            this.logContent = logContent;
+            this.logSource = logSource;
+        }
     }
 }

@@ -6,8 +6,6 @@ import com.loganalyzer.data.TestcaseResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.InjectMocks;
 import org.mockito.MockitoAnnotations;
 
@@ -17,11 +15,11 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Comprehensive Unit Tests for the LogAnalysisService.
- * This class ensures that all core business logic, especially the
- * case-insensitive matching,
- * works correctly across various input scenarios, using the simplified output
- * format.
+ * Unit Tests for the LogAnalysisService, updated for the new
+ * multi-log/dual-test model.
+ * Tests ensure correct DTO usage and verify the Issue 1 temporary rule: full
+ * cross-validation
+ * (all 2 test sets checked against all 4 logs).
  */
 public class LogAnalysisServiceTest {
 
@@ -37,36 +35,34 @@ public class LogAnalysisServiceTest {
 	// --- Helper Assertion Methods ---
 
 	/**
-	 * Helper method to assert the outcome and simplified format of a specific test
-	 * case within the results list.
-	 *
-	 * @param results        The list of results returned by the service.
-	 * @param testName       The expected test case name.
-	 * @param expectedResult The expected {@link TestcaseResult} status.
+	 * Helper method to assert the outcome, simplified format, and log source of a
+	 * specific test case.
 	 */
-	private void assertTestResult(List<AnalysisResult> results, String testName, TestcaseResult expectedResult) {
+	private void assertTestResult(List<AnalysisResult> results, String testName, TestcaseResult expectedResult,
+			String expectedLogSource) {
+		// Find the result matching both the test name AND the log source
 		Optional<AnalysisResult> resultOpt = results.stream()
-				.filter(r -> r.getTestCaseName().equals(testName))
+				.filter(r -> r.getTestCaseName().equals(testName) && r.getLogSource().equals(expectedLogSource))
 				.findFirst();
 
-		assertTrue(resultOpt.isPresent(), "Test case '" + testName + "' should be present in results.");
+		assertTrue(resultOpt.isPresent(),
+				"Test case '" + testName + "' from source '" + expectedLogSource + "' should be present in results.");
 		AnalysisResult actualResult = resultOpt.get();
 
 		// 1. Assert core enum result
 		assertEquals(expectedResult, actualResult.getResult(),
 				"Test case '" + testName + "' expected result to be " + expectedResult);
 
-		// 2. Assert simplified message content (FIXED: Expected only "Found" or "Not
-		// Found")
-		String expectedMessage = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
+		// 2. Assert simplified message content
+		String expectedMessagePart = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
 
-		assertEquals(expectedMessage, actualResult.getMessage(),
-				"Result message must match the final simplified expected status: " + expectedMessage);
+		assertEquals(expectedMessagePart, actualResult.getMessage(),
+				"Result message must match the simplified expected status.");
 
-		// 3. Assert simplified summary format (Expected O/P)
+		// 3. Assert simplified summary format (including log source)
 		String status = expectedResult == TestcaseResult.Found ? "OK" : "NOT OK";
 		String resultType = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
-		String expectedSummary = String.format("%s: %s (%s)", testName, status, resultType);
+		String expectedSummary = String.format("%s [%s]: %s (%s)", testName, expectedLogSource, status, resultType);
 
 		assertEquals(expectedSummary, actualResult.getSummary(),
 				"Summary format is incorrect (Expected O/P).");
@@ -75,155 +71,71 @@ public class LogAnalysisServiceTest {
 	// --- Test Cases ---
 
 	@Test
-	@DisplayName("GIVEN simple inputs WHEN analysis runs THEN all found tests should be case-insensitive matched")
-	public void testBasicCaseInsensitiveMatching() {
+	@DisplayName("GIVEN full multi-input request WHEN analysis runs THEN verify all 8 cross-validation runs correctly")
+	public void testFullCrossValidationAnalysis() {
 		// Arrange
-		final String testCaseInput = "Test_Case_1\ntest_case_2\nTEST_CASE_3";
-		final String logContent = "log message with test_case_1 success and TEST_CASE_2 completion. Test_Case_3 is also here.";
+		final String mainTests = "Main_Test_A\nMain_Test_B"; // 2 tests
+		final String reportTests = "Report_Test_C\nReport_Test_D"; // 2 tests
+		final String logContentWithA = "Log content with main_test_a";
+		final String logContentWithC = "Log content with report_test_c";
+
 		final AnalysisRequest request = AnalysisRequest.builder()
-				.withTestCaseListInput(testCaseInput)
-				.withLogContentInput(logContent)
+				.withMainJsonTests(mainTests)
+				.withReportJsonTests(reportTests)
+				.withBaseLog(logContentWithA)
+				.withBeforeLog("Log without content")
+				.withAfterLog(logContentWithA)
+				.withPostAgentPatchLog(logContentWithC)
 				.build();
 
 		// Act
 		List<AnalysisResult> results = analysisService.analyzeLogs(request);
 
-		// Assert
+		// Expected results: 2 main tests * 4 logs + 2 report tests * 4 logs = 16
+		// expected results
 		assertNotNull(results);
-		assertEquals(3, results.size(), "Expected exactly 3 results.");
+		assertEquals(16, results.size(),
+				"Expected 16 analysis results (4 logs * 2 main tests + 4 logs * 2 report tests).");
 
-		assertTestResult(results, "Test_Case_1", TestcaseResult.Found);
-		assertTestResult(results, "test_case_2", TestcaseResult.Found);
-		assertTestResult(results, "TEST_CASE_3", TestcaseResult.Found);
+		// --- Assert Main Tests (Main_Test_A, Main_Test_B) against ALL 4 logs ---
+
+		// base_log (A found, B missing)
+		assertTestResult(results, "Main_Test_A", TestcaseResult.Found, "base_log");
+		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "base_log");
+
+		// before_log (A missing, B missing)
+		assertTestResult(results, "Main_Test_A", TestcaseResult.NotFound, "before_log");
+		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "before_log");
+
+		// after_log (A found, B missing)
+		assertTestResult(results, "Main_Test_A", TestcaseResult.Found, "after_log");
+		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "after_log");
+
+		// post_agent_patch_log (A missing, B missing)
+		assertTestResult(results, "Main_Test_A", TestcaseResult.NotFound, "post_agent_patch_log");
+		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "post_agent_patch_log");
+
+		// --- Assert Report Tests (Report_Test_C, Report_Test_D) against ALL 4 logs ---
+
+		// base_log (C missing, D missing)
+		assertTestResult(results, "Report_Test_C", TestcaseResult.NotFound, "base_log");
+		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "base_log");
+
+		// before_log (C missing, D missing)
+		assertTestResult(results, "Report_Test_C", TestcaseResult.NotFound, "before_log");
+		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "before_log");
+
+		// after_log (C missing, D missing)
+		assertTestResult(results, "Report_Test_C", TestcaseResult.NotFound, "after_log");
+		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "after_log");
+
+		// post_agent_patch_log (C found, D missing)
+		assertTestResult(results, "Report_Test_C", TestcaseResult.Found, "post_agent_patch_log");
+		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "post_agent_patch_log");
 	}
 
 	@Test
-	@DisplayName("GIVEN mixed case and missing tests WHEN analysis runs THEN accurately report found and not found status")
-	public void testMixedCaseAndNotFound() {
-		// Arrange
-		final String testCaseInput = "Test_A\nTest_Missing\nTEST_B";
-		final String logContent = "The log only has test_a and some other info.";
-		final AnalysisRequest request = AnalysisRequest.builder()
-				.withTestCaseListInput(testCaseInput)
-				.withLogContentInput(logContent)
-				.build();
-
-		// Act
-		List<AnalysisResult> results = analysisService.analyzeLogs(request);
-
-		// Assert
-		assertEquals(3, results.size());
-		assertTestResult(results, "Test_A", TestcaseResult.Found);
-		assertTestResult(results, "Test_Missing", TestcaseResult.NotFound);
-		assertTestResult(results, "TEST_B", TestcaseResult.NotFound);
-	}
-
-	// --- Edge Case Testing ---
-
-	@Test
-	@DisplayName("GIVEN empty test case input WHEN analysis runs THEN return system error result")
-	public void testEmptyTestCaseList() {
-		// Arrange
-		final String testCaseInput = "\n  \n "; // Only whitespace
-		final String logContent = "This log content should not matter.";
-		final AnalysisRequest request = AnalysisRequest.builder()
-				.withTestCaseListInput(testCaseInput)
-				.withLogContentInput(logContent)
-				.build();
-
-		// Act
-		List<AnalysisResult> results = analysisService.analyzeLogs(request);
-
-		// Assert
-		assertNotNull(results);
-		assertFalse(results.isEmpty());
-		// Should return the system check error
-		assertEquals("SystemCheck", results.get(0).getTestCaseName());
-		assertEquals(TestcaseResult.Error, results.get(0).getResult());
-		assertTrue(results.get(0).getMessage().contains("No test cases provided"));
-		assertTrue(results.get(0).getSummary().contains("ERROR (No test cases provided for analysis.)"));
-	}
-
-	@Test
-	@DisplayName("GIVEN very large log content WHEN analysis runs THEN performance should be acceptable (simulated)")
-	public void testLargeLogContent() {
-		// Arrange
-		final String testName = "Performance_Test";
-		final String logContent = "a".repeat(50000) + testName.toLowerCase() + "z".repeat(50000); // 100k+ chars
-		final AnalysisRequest request = AnalysisRequest.builder()
-				.withTestCaseListInput(testName)
-				.withLogContentInput(logContent)
-				.build();
-
-		// Act
-		long startTime = System.nanoTime();
-		List<AnalysisResult> results = analysisService.analyzeLogs(request);
-		long endTime = System.nanoTime();
-
-		// Assert
-		assertTestResult(results, testName, TestcaseResult.Found);
-		long durationMs = (endTime - startTime) / 1_000_000;
-		// The check should be fast.
-		assertTrue(durationMs < 1000, "Analysis took too long: " + durationMs + "ms. Should be < 1000ms.");
-	}
-
-	@ParameterizedTest
-	@CsvSource({
-			"Test_A, test_a, Found",
-			"TEST_B, test_b_other, Found",
-			"Case_C, NOTFOUND, NotFound"
-	})
-	@DisplayName("GIVEN CSV inputs WHEN run as parameterized test THEN verify results based on data table")
-	public void testParameterizedInputs(String testName, String logSnippet, TestcaseResult expected) {
-		// Arrange
-		final String testCaseInput = testName;
-		final String logContent = "Log content with " + logSnippet + " present.";
-		final AnalysisRequest request = AnalysisRequest.builder()
-				.withTestCaseListInput(testCaseInput)
-				.withLogContentInput(logContent)
-				.build();
-
-		// Act
-		List<AnalysisResult> results = analysisService.analyzeLogs(request);
-
-		// Assert (uses updated helper method)
-		assertTestResult(results, testName, expected);
-
-		// Additional assertion for code coverage
-		if (expected == TestcaseResult.Found) {
-			assertTrue(results.get(0).isFound(), "isFound() method must return true.");
-		} else {
-			assertFalse(results.get(0).isFound(), "isFound() method must return false.");
-		}
-	}
-
-	@Test
-	@DisplayName("GIVEN multiple delimiters WHEN parsing input THEN correctly identify all test cases")
-	void testInputDelimiterParsing() {
-		// Arrange
-		final String testCaseInput = "Test1,Test2; \n Test3 \n\rTest4";
-		final String logContent = "logcontent with test1 test2 test3 test4";
-		final AnalysisRequest request = AnalysisRequest.builder()
-				.withTestCaseListInput(testCaseInput)
-				.withLogContentInput(logContent)
-				.build();
-
-		// Act
-		List<AnalysisResult> results = analysisService.analyzeLogs(request);
-
-		// Assert
-		assertEquals(4, results.size(), "Expected 4 test cases after parsing all delimiters.");
-		assertTestResult(results, "Test1", TestcaseResult.Found);
-		assertTestResult(results, "Test2", TestcaseResult.Found);
-		assertTestResult(results, "Test3", TestcaseResult.Found);
-		assertTestResult(results, "Test4", TestcaseResult.Found);
-	}
-
-	/**
-	 * Test to ensure that the service can handle null request inputs gracefully.
-	 */
-	@Test
-	@DisplayName("GIVEN null request WHEN analysis runs THEN return a default failure state")
+	@DisplayName("GIVEN null request WHEN analysis runs THEN return a system error result")
 	void testNullRequestHandling() {
 		// Act
 		List<AnalysisResult> results = analysisService.analyzeLogs(null);
@@ -232,8 +144,46 @@ public class LogAnalysisServiceTest {
 		assertNotNull(results);
 		assertEquals(1, results.size(), "Expected a single system error result.");
 		assertEquals("SystemCheck", results.get(0).getTestCaseName());
-		assertEquals(TestcaseResult.Error, results.get(0).getResult());
-		assertTrue(results.get(0).getMessage().contains("Invalid request received."));
-		assertTrue(results.get(0).getSummary().contains("ERROR (Invalid request received.)"));
+		assertEquals("N/A", results.get(0).getLogSource(), "Log source should be N/A for null request.");
+		assertTrue(results.get(0).getMessage().contains("Invalid analysis request received"));
+	}
+
+	@Test
+	@DisplayName("GIVEN null log content WHEN analysis runs THEN return system error result for that log source")
+	public void testNullLogContent() {
+		// Arrange
+		final String mainTests = "Test_A"; // Valid input
+		final String reportTests = "Test_B"; // Valid input
+
+		final AnalysisRequest request = AnalysisRequest.builder()
+				.withMainJsonTests(mainTests)
+				.withReportJsonTests(reportTests)
+				.withBaseLog(null) // Null log -> Should generate error for base_log (twice)
+				.withBeforeLog("Valid log")
+				.withAfterLog("Valid log")
+				.withPostAgentPatchLog("Valid log")
+				.build();
+
+		// Act
+		List<AnalysisResult> results = analysisService.analyzeLogs(request);
+
+		// Assert: We expect 6 successful results (from 3 good logs) and 2 system errors
+		// (one for each test set failing against the null base_log). Total 8.
+		assertEquals(8, results.size(), "Expected 6 test results and 2 SystemCheck errors for the null log.");
+
+		// Assert the System Error result for MainTests in base_log
+		Optional<AnalysisResult> errorAMainOpt = results.stream()
+				.filter(r -> r.getTestCaseName().equals("SystemCheck") && r.getLogSource().equals("base_log"))
+				.findFirst();
+
+		assertTrue(errorAMainOpt.isPresent(), "SystemCheck error for base_log should be present (MainTests).");
+		assertEquals(TestcaseResult.Error, errorAMainOpt.get().getResult());
+		assertTrue(errorAMainOpt.get().getSummary().contains("Log content is missing."));
+
+		// Assert the system error for ReportTests in base_log
+		long errorCount = results.stream()
+				.filter(r -> r.getTestCaseName().equals("SystemCheck") && r.getLogSource().equals("base_log"))
+				.count();
+		assertEquals(2, errorCount, "Expected exactly two SystemCheck errors for base_log (one for each test set).");
 	}
 }

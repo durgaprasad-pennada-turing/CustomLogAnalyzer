@@ -1,72 +1,131 @@
 package com.loganalyzer.data;
 
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize; // 1. Import Jackson annotation
-
 /**
- * Data Transfer Object (DTO) for the log analysis request.
- * Implements the Builder pattern to enforce mandatory fields and readability.
+ * Data Transfer Object (DTO) holding all inputs required for a multi-stage log
+ * analysis.
  *
- * The @JsonDeserialize annotation instructs Jackson to use the inner Builder
- * class
- * when attempting to map incoming JSON data into this object, resolving the
- * runtime error.
+ * Replaces the monolithic log and test inputs with four distinct log fields and
+ * two test list fields.
  */
-@JsonDeserialize(builder = AnalysisRequest.Builder.class) // 2. Tell Jackson to use the Builder
 public class AnalysisRequest {
 
-    // Input string containing all test cases, separated by newlines or commas
-    private final String testCaseListInput;
+    // --- Log Content Inputs (4) ---
+    private String baseLog;
+    private String beforeLog;
+    private String afterLog;
+    private String postAgentPatchLog;
 
-    // The raw log file content
-    private final String logContentInput;
+    // --- Test Case Inputs (2 Sets) ---
+    private String mainJsonTests;
+    private String reportJsonTests;
 
-    // Private constructor used exclusively by the Builder
-    private AnalysisRequest(Builder builder) {
-        this.testCaseListInput = builder.testCaseListInput;
-        this.logContentInput = builder.logContentInput;
+    // Default constructor for deserialization
+    public AnalysisRequest() {
     }
 
-    // Static factory method to get a new Builder instance
+    // --- Builder Pattern (for unit testing and easy instantiation) ---
+
     public static Builder builder() {
         return new Builder();
     }
 
-    // Getters
-    public String getTestCaseListInput() {
-        return testCaseListInput;
-    }
-
-    public String getLogContentInput() {
-        return logContentInput;
-    }
-
-    /**
-     * The Builder implementation.
-     */
     public static class Builder {
-        private String testCaseListInput;
-        private String logContentInput;
+        private String baseLog;
+        private String beforeLog;
+        private String afterLog;
+        private String postAgentPatchLog;
+        private String mainJsonTests;
+        private String reportJsonTests;
 
-        // 3. Make the constructor PUBLIC for Jackson to use during deserialization
-        public Builder() {
-        }
-
-        public Builder withTestCaseListInput(String testCaseListInput) {
-            this.testCaseListInput = testCaseListInput;
+        public Builder withBaseLog(String baseLog) {
+            this.baseLog = baseLog;
             return this;
         }
 
-        public Builder withLogContentInput(String logContentInput) {
-            this.logContentInput = logContentInput;
+        public Builder withBeforeLog(String beforeLog) {
+            this.beforeLog = beforeLog;
+            return this;
+        }
+
+        public Builder withAfterLog(String afterLog) {
+            this.afterLog = afterLog;
+            return this;
+        }
+
+        public Builder withPostAgentPatchLog(String postAgentPatchLog) {
+            this.postAgentPatchLog = postAgentPatchLog;
+            return this;
+        }
+
+        public Builder withMainJsonTests(String mainJsonTests) {
+            this.mainJsonTests = mainJsonTests;
+            return this;
+        }
+
+        public Builder withReportJsonTests(String reportJsonTests) {
+            this.reportJsonTests = reportJsonTests;
             return this;
         }
 
         public AnalysisRequest build() {
-            // Simple validation to ensure data integrity
-            if (testCaseListInput == null || logContentInput == null) {
-                throw new IllegalStateException("Test Case List and Log Content must not be null.");
-            }
-            return new AnalysisRequest(this);
+            AnalysisRequest request = new AnalysisRequest();
+            request.baseLog = this.baseLog;
+            request.beforeLog = this.beforeLog;
+            request.afterLog = this.afterLog;
+            request.postAgentPatchLog = this.postAgentPatchLog;
+            request.mainJsonTests = this.mainJsonTests;
+            request.reportJsonTests = this.reportJsonTests;
+            return request;
         }
+    }
+
+    // --- Getters and Setters ---
+
+    public String getBaseLog() {
+        return baseLog;
+    }
+
+    public void setBaseLog(String baseLog) {
+        this.baseLog = baseLog;
+    }
+
+    public String getBeforeLog() {
+        return beforeLog;
+    }
+
+    public void setBeforeLog(String beforeLog) {
+        this.beforeLog = beforeLog;
+    }
+
+    public String getAfterLog() {
+        return afterLog;
+    }
+
+    public void setAfterLog(String afterLog) {
+        this.afterLog = afterLog;
+    }
+
+    public String getPostAgentPatchLog() {
+        return postAgentPatchLog;
+    }
+
+    public void setPostAgentPatchLog(String postAgentPatchLog) {
+        this.postAgentPatchLog = postAgentPatchLog;
+    }
+
+    public String getMainJsonTests() {
+        return mainJsonTests;
+    }
+
+    public void setMainJsonTests(String mainJsonTests) {
+        this.mainJsonTests = mainJsonTests;
+    }
+
+    public String getReportJsonTests() {
+        return reportJsonTests;
+    }
+
+    public void setReportJsonTests(String reportJsonTests) {
+        this.reportJsonTests = reportJsonTests;
     }
 }
