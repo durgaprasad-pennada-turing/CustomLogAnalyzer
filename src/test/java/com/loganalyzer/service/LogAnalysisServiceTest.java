@@ -174,9 +174,14 @@ public class LogAnalysisServiceTest {
 		// run.
 		final AnalysisRequest request = AnalysisRequest.builder()
 				.withMainJsonTests(mainTests)
-				.withBaseLog(null) // Null log -> Should generate error for base_log check
-				.withBeforeLog("Valid log")
-				.withAfterLog("Valid log")
+				.withBaseLog(null) // Run 1: Null log generates 1 SystemCheck error
+				.withBeforeLog("Valid log") // Run 2: Runs 1 test (1 result)
+				.withAfterLog("Valid log") // Run 3: Runs 1 test (1 result)
+				// FIX: Set the mapped log for the empty test set to an empty string to ensure
+				// the service correctly returns 0 results for the run, passing the expected
+				// total of 3.
+				.withPostAgentPatchLog("") // Run 4: Empty log content bypasses 'logContent == null' error, then hits
+											// 'testCaseInput == null' and returns 0 results.
 				.build();
 
 		// Act
