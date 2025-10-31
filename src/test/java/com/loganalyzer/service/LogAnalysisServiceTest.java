@@ -15,11 +15,13 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit Tests for the LogAnalysisService, updated for the new
- * multi-log/dual-test model.
- * Tests ensure correct DTO usage and verify the Issue 1 temporary rule: full
- * cross-validation
- * (all 2 test sets checked against all 4 logs).
+ * Unit Tests for the LogAnalysisService, updated for the CORRECT Granular
+ * Mapping rule (Issue 2).
+ * The service is expected to perform analysis based on the following map:
+ * - Main Tests: base_log, before_log, after_log
+ * - Report Tests: post_agent_patch_log
+ * Total expected results (2 Main Tests x 3 Logs) + (2 Report Tests x 1 Log) = 8
+ * results.
  */
 public class LogAnalysisServiceTest {
 
@@ -51,7 +53,7 @@ public class LogAnalysisServiceTest {
 
 		// 1. Assert core enum result
 		assertEquals(expectedResult, actualResult.getResult(),
-				"Test case '" + testName + "' expected result to be " + expectedResult);
+				"Test case '" + testName + "' expected result to be " + expectedResult + " in " + expectedLogSource);
 
 		// 2. Assert simplified message content
 		String expectedMessagePart = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
@@ -71,68 +73,80 @@ public class LogAnalysisServiceTest {
 	// --- Test Cases ---
 
 	@Test
-	@DisplayName("GIVEN full multi-input request WHEN analysis runs THEN verify all 8 cross-validation runs correctly")
-	public void testFullCrossValidationAnalysis() {
+	@DisplayName("GIVEN multi-input request WHEN analysis runs THEN verify correct granular mapping (8 total results)")
+	public void testGranularMappingAnalysis() {
 		// Arrange
-		final String mainTests = "Main_Test_A\nMain_Test_B"; // 2 tests
-		final String reportTests = "Report_Test_C\nReport_Test_D"; // 2 tests
-		final String logContentWithA = "Log content with main_test_a";
-		final String logContentWithC = "Log content with report_test_c";
+		final String mainTests = "Main_Test_A\nMain_Test_B"; // 2 tests (mapped to base_log, before_log, after_log)
+		final String reportTests = "Report_Test_C\nReport_Test_D"; // 2 tests (mapped to post_agent_patch_log)
+
+		// Log contents designed to check if tests are run against the correct mapped
+		// logs
+		final String baseLogContent = "Log with Main_Test_A"; // Contains Main_Test_A
+		final String beforeLogContent = "Log with Main_Test_B"; // Contains Main_Test_B
+		final String afterLogContent = "Log with Main_Test_A and Main_Test_B"; // Contains BOTH A and B
+		final String postAgentPatchLogContent = "Log with Report_Test_C"; // Contains Report_Test_C
 
 		final AnalysisRequest request = AnalysisRequest.builder()
 				.withMainJsonTests(mainTests)
 				.withReportJsonTests(reportTests)
-				.withBaseLog(logContentWithA)
-				.withBeforeLog("Log without content")
-				.withAfterLog(logContentWithA)
-				.withPostAgentPatchLog(logContentWithC)
+				.withBaseLog(baseLogContent)
+				.withBeforeLog(beforeLogContent)
+				.withAfterLog(afterLogContent)
+				.withPostAgentPatchLog(postAgentPatchLogContent)
 				.build();
 
 		// Act
 		List<AnalysisResult> results = analysisService.analyzeLogs(request);
 
-		// Expected results: 2 main tests * 4 logs + 2 report tests * 4 logs = 16
-		// expected results
+		// Expected results: (2 Main Tests * 3 Mapped Logs) + (2 Report Tests * 1 Mapped
+		// Log) = 8 expected results
 		assertNotNull(results);
-		assertEquals(16, results.size(),
-				"Expected 16 analysis results (4 logs * 2 main tests + 4 logs * 2 report tests).");
+		assertEquals(8, results.size(), "Expected 8 analysis results based on the correct granular mapping.");
 
-		// --- Assert Main Tests (Main_Test_A, Main_Test_B) against ALL 4 logs ---
+		// --- Assert Main Tests (Main_Test_A, Main_Test_B) against MAPPED logs:
+		// base_log, before_log, after_log ---
 
-		// base_log (A found, B missing)
+		// base_log: A FOUND, B NOT FOUND
 		assertTestResult(results, "Main_Test_A", TestcaseResult.Found, "base_log");
 		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "base_log");
 
-		// before_log (A missing, B missing)
+		// before_log: A NOT FOUND, B FOUND
 		assertTestResult(results, "Main_Test_A", TestcaseResult.NotFound, "before_log");
-		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "before_log");
+		assertTestResult(results, "Main_Test_B", TestcaseResult.Found, "before_log");
 
-		// after_log (A found, B missing)
+		// after_log: A FOUND, B FOUND
 		assertTestResult(results, "Main_Test_A", TestcaseResult.Found, "after_log");
-		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "after_log");
+		assertTestResult(results, "Main_Test_B", TestcaseResult.Found, "after_log");
 
-		// post_agent_patch_log (A missing, B missing)
-		assertTestResult(results, "Main_Test_A", TestcaseResult.NotFound, "post_agent_patch_log");
-		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "post_agent_patch_log");
+		// --- Assert Report Tests (Report_Test_C, Report_Test_D) against MAPPED log:
+		// post_agent_patch_log ---
 
-		// --- Assert Report Tests (Report_Test_C, Report_Test_D) against ALL 4 logs ---
-
-		// base_log (C missing, D missing)
-		assertTestResult(results, "Report_Test_C", TestcaseResult.NotFound, "base_log");
-		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "base_log");
-
-		// before_log (C missing, D missing)
-		assertTestResult(results, "Report_Test_C", TestcaseResult.NotFound, "before_log");
-		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "before_log");
-
-		// after_log (C missing, D missing)
-		assertTestResult(results, "Report_Test_C", TestcaseResult.NotFound, "after_log");
-		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "after_log");
-
-		// post_agent_patch_log (C found, D missing)
+		// post_agent_patch_log: C FOUND, D NOT FOUND
 		assertTestResult(results, "Report_Test_C", TestcaseResult.Found, "post_agent_patch_log");
 		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "post_agent_patch_log");
+
+		// --- Verification of SKIPPED combinations (Proof of Granular Mapping) ---
+
+		// Main Tests should NOT be present for 'post_agent_patch_log'
+		long mainTestsInSkippedLogs = results.stream()
+				.filter(r -> r.getTestCaseName().startsWith("Main_Test_") &&
+						r.getLogSource().equals("post_agent_patch_log"))
+				.count();
+		assertEquals(0, mainTestsInSkippedLogs,
+				"Main Tests should not be run against the unmapped post_agent_patch_log.");
+
+		// Report Tests should NOT be present for 'base_log', 'before_log', or
+		// 'after_log'
+		long reportTestsInSkippedLogs = results.stream()
+				.filter(r -> r.getTestCaseName().startsWith("Report_Test_") &&
+						(r.getLogSource().equals("base_log") || r.getLogSource().equals("before_log")
+								|| r.getLogSource().equals("after_log")))
+				.count();
+		assertEquals(0, reportTestsInSkippedLogs,
+				"Report Tests should not be run against unmapped logs (base_log, before_log, after_log).");
 	}
+
+	// --- Error Handling Tests (Ensure they still work with new mapping logic) ---
 
 	@Test
 	@DisplayName("GIVEN null request WHEN analysis runs THEN return a system error result")
@@ -149,41 +163,40 @@ public class LogAnalysisServiceTest {
 	}
 
 	@Test
-	@DisplayName("GIVEN null log content WHEN analysis runs THEN return system error result for that log source")
-	public void testNullLogContent() {
+	@DisplayName("GIVEN null log content in mapped log THEN return system error result for that log source")
+	public void testNullMappedLogContent() {
 		// Arrange
 		final String mainTests = "Test_A"; // Valid input
-		final String reportTests = "Test_B"; // Valid input
 
+		// The mapping requires Main Tests to run against base_log, before_log, and
+		// after_log.
+		// If baseLog is null, an error should be generated for the base_log analysis
+		// run.
 		final AnalysisRequest request = AnalysisRequest.builder()
 				.withMainJsonTests(mainTests)
-				.withReportJsonTests(reportTests)
-				.withBaseLog(null) // Null log -> Should generate error for base_log (twice)
+				.withBaseLog(null) // Null log -> Should generate error for base_log check
 				.withBeforeLog("Valid log")
 				.withAfterLog("Valid log")
-				.withPostAgentPatchLog("Valid log")
 				.build();
 
 		// Act
 		List<AnalysisResult> results = analysisService.analyzeLogs(request);
 
-		// Assert: We expect 6 successful results (from 3 good logs) and 2 system errors
-		// (one for each test set failing against the null base_log). Total 8.
-		assertEquals(8, results.size(), "Expected 6 test results and 2 SystemCheck errors for the null log.");
+		// Assert: We expect 1 SystemCheck error (base_log) + 2 Test_A checks
+		// (before_log, after_log). Total 3.
+		assertEquals(3, results.size(), "Expected 2 test results and 1 SystemCheck error.");
 
-		// Assert the System Error result for MainTests in base_log
-		Optional<AnalysisResult> errorAMainOpt = results.stream()
+		// Assert the System Error result for base_log
+		Optional<AnalysisResult> errorOpt = results.stream()
 				.filter(r -> r.getTestCaseName().equals("SystemCheck") && r.getLogSource().equals("base_log"))
 				.findFirst();
 
-		assertTrue(errorAMainOpt.isPresent(), "SystemCheck error for base_log should be present (MainTests).");
-		assertEquals(TestcaseResult.Error, errorAMainOpt.get().getResult());
-		assertTrue(errorAMainOpt.get().getSummary().contains("Log content is missing."));
+		assertTrue(errorOpt.isPresent(), "SystemCheck error for base_log should be present.");
+		assertEquals(TestcaseResult.Error, errorOpt.get().getResult());
+		assertTrue(errorOpt.get().getSummary().contains("Log content is missing."));
 
-		// Assert the system error for ReportTests in base_log
-		long errorCount = results.stream()
-				.filter(r -> r.getTestCaseName().equals("SystemCheck") && r.getLogSource().equals("base_log"))
-				.count();
-		assertEquals(2, errorCount, "Expected exactly two SystemCheck errors for base_log (one for each test set).");
+		// Assert the successful runs for before_log and after_log
+		assertTestResult(results, "Test_A", TestcaseResult.NotFound, "before_log");
+		assertTestResult(results, "Test_A", TestcaseResult.NotFound, "after_log");
 	}
 }
