@@ -11,17 +11,15 @@ import org.mockito.MockitoAnnotations;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit Tests for the LogAnalysisService, updated for the CORRECT Granular
- * Mapping rule (Issue 2).
- * The service is expected to perform analysis based on the following map:
- * - Main Tests: base_log, before_log, after_log
- * - Report Tests: post_agent_patch_log
- * Total expected results (2 Main Tests x 3 Logs) + (2 Report Tests x 1 Log) = 8
- * results.
+ * Unit Tests for the LogAnalysisService, verifying:
+ * 1. Correct DTO usage (Issue 1).
+ * 2. Granular mapping rules (Issue 2).
+ * 3. Strict regex-based test execution verification (Issue 3).
  */
 public class LogAnalysisServiceTest {
 
@@ -53,103 +51,115 @@ public class LogAnalysisServiceTest {
 
 		// 1. Assert core enum result
 		assertEquals(expectedResult, actualResult.getResult(),
-				"Test case '" + testName + "' expected result to be " + expectedResult + " in " + expectedLogSource);
+				"Test case '" + testName + "' expected result to be " + expectedResult);
 
-		// 2. Assert simplified message content
-		String expectedMessagePart = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
+		// 2. Assert simplified message content (only for Found/NotFound)
+		if (expectedResult != TestcaseResult.Error) {
+			String expectedMessagePart = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
 
-		assertEquals(expectedMessagePart, actualResult.getMessage(),
-				"Result message must match the simplified expected status.");
+			assertEquals(expectedMessagePart, actualResult.getMessage(),
+					"Result message must match the simplified expected status.");
 
-		// 3. Assert simplified summary format (including log source)
-		String status = expectedResult == TestcaseResult.Found ? "OK" : "NOT OK";
-		String resultType = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
-		String expectedSummary = String.format("%s [%s]: %s (%s)", testName, expectedLogSource, status, resultType);
+			// 3. Assert simplified summary format (including log source)
+			String status = expectedResult == TestcaseResult.Found ? "OK" : "NOT OK";
+			String resultType = expectedResult == TestcaseResult.Found ? "Found" : "Not Found";
+			String expectedSummary = String.format("%s [%s]: %s (%s)", testName, expectedLogSource, status, resultType);
 
-		assertEquals(expectedSummary, actualResult.getSummary(),
-				"Summary format is incorrect (Expected O/P).");
+			assertEquals(expectedSummary, actualResult.getSummary(),
+					"Summary format is incorrect (Expected O/P).");
+		}
+		// Note: For TestcaseResult.Error, we skip standard summary check and rely on
+		// separate error message checks.
+	}
+
+	/**
+	 * Helper method to assert a SystemCheck error.
+	 */
+	private void assertSystemError(List<AnalysisResult> results, String expectedLogSource, String expectedMessagePart) {
+		Optional<AnalysisResult> errorOpt = results.stream()
+				.filter(r -> r.getTestCaseName().equals("SystemCheck") && r.getLogSource().equals(expectedLogSource))
+				.findFirst();
+
+		assertTrue(errorOpt.isPresent(), "Expected SystemCheck error for source: " + expectedLogSource);
+		assertEquals(TestcaseResult.Error, errorOpt.get().getResult());
+		assertTrue(errorOpt.get().getMessage().contains(expectedMessagePart),
+				"SystemCheck message should contain: " + expectedMessagePart);
+
+		// Assert SystemCheck summary format: SystemCheck [Source]: ERROR (Custom Error
+		// Message)
+		String expectedSummaryStart = String.format("SystemCheck [%s]: ERROR (", expectedLogSource);
+		assertTrue(errorOpt.get().getSummary().startsWith(expectedSummaryStart),
+				"SystemCheck summary format is incorrect.");
 	}
 
 	// --- Test Cases ---
 
 	@Test
-	@DisplayName("GIVEN multi-input request WHEN analysis runs THEN verify correct granular mapping (8 total results)")
-	public void testGranularMappingAnalysis() {
+	@DisplayName("GIVEN full multi-input request WHEN analysis runs THEN verify granular mapping and regex matching are correct")
+	public void testGranularMappingAndRegexMatching() {
 		// Arrange
-		final String mainTests = "Main_Test_A\nMain_Test_B"; // 2 tests (mapped to base_log, before_log, after_log)
-		final String reportTests = "Report_Test_C\nReport_Test_D"; // 2 tests (mapped to post_agent_patch_log)
+		// Test A (Found) and Test B (Not Found) for main tests.
+		final String mainTests = "org.junit.TestA-Prefix-Text.TestA MethodName\norg.junit.TestB-Missing.TestB MethodName";
+		// Test C (Found) and Test D (Not Found) for report tests.
+		final String reportTests = "org.junit.TestC-Prefix-Text.TestC MethodName\norg.junit.TestD-Missing.TestD MethodName";
 
-		// Log contents designed to check if tests are run against the correct mapped
-		// logs
-		final String baseLogContent = "Log with Main_Test_A"; // Contains Main_Test_A
-		final String beforeLogContent = "Log with Main_Test_B"; // Contains Main_Test_B
-		final String afterLogContent = "Log with Main_Test_A and Main_Test_B"; // Contains BOTH A and B
-		final String postAgentPatchLogContent = "Log with Report_Test_C"; // Contains Report_Test_C
+		final String logContent =
+				// TestA match
+				"2023-10-27 INFO Some optional prefix text [INFO] Another optional text org.junit.TestA-Prefix-Text.TestA MethodName Time elapsed: 1.573 s Some optional text\n"
+						+
+						"2023-10-27 INFO Should not match this line as it has no time elapsed.\n" +
+						// TestC match
+						"2023-10-27 INFO [INFO] org.junit.TestC-Prefix-Text.TestC MethodName -- Time elapsed: 2 s\n" +
+						"2023-10-27 INFO [INFO] org.junit.TestC-Prefix-Text.TestC MethodName -- Time elapsed: 2 s\n";
 
+		// base_log: Found A, Missing B
+		// before_log: Found A, Missing B
+		// after_log: Found A, Missing B
+		// post_agent_patch_log: Found C, Missing D
 		final AnalysisRequest request = AnalysisRequest.builder()
 				.withMainJsonTests(mainTests)
 				.withReportJsonTests(reportTests)
-				.withBaseLog(baseLogContent)
-				.withBeforeLog(beforeLogContent)
-				.withAfterLog(afterLogContent)
-				.withPostAgentPatchLog(postAgentPatchLogContent)
+				.withBaseLog(logContent) // Main Test Log #1
+				.withBeforeLog(logContent) // Main Test Log #2
+				.withAfterLog(logContent) // Main Test Log #3
+				.withPostAgentPatchLog(logContent) // Report Test Log #1
 				.build();
 
 		// Act
 		List<AnalysisResult> results = analysisService.analyzeLogs(request);
 
-		// Expected results: (2 Main Tests * 3 Mapped Logs) + (2 Report Tests * 1 Mapped
-		// Log) = 8 expected results
+		// Expected results: (2 Main Tests * 3 Logs) + (2 Report Tests * 1 Log) = 6 + 2
+		// = 8 total results
 		assertNotNull(results);
-		assertEquals(8, results.size(), "Expected 8 analysis results based on the correct granular mapping.");
+		assertEquals(8, results.size(),
+				"Expected 8 total results based on granular mapping: (2 main * 3 logs) + (2 report * 1 log).");
 
-		// --- Assert Main Tests (Main_Test_A, Main_Test_B) against MAPPED logs:
-		// base_log, before_log, after_log ---
+		// --- Assert Main Tests (A, B) against base_log, before_log, after_log (3 logs)
+		// ---
 
-		// base_log: A FOUND, B NOT FOUND
-		assertTestResult(results, "Main_Test_A", TestcaseResult.Found, "base_log");
-		assertTestResult(results, "Main_Test_B", TestcaseResult.NotFound, "base_log");
+		// base_log (A found, B missing)
+		assertTestResult(results, "org.junit.TestA-Prefix-Text.TestA MethodName", TestcaseResult.Found, "base_log");
+		assertTestResult(results, "org.junit.TestB-Missing.TestB MethodName", TestcaseResult.NotFound, "base_log");
 
-		// before_log: A NOT FOUND, B FOUND
-		assertTestResult(results, "Main_Test_A", TestcaseResult.NotFound, "before_log");
-		assertTestResult(results, "Main_Test_B", TestcaseResult.Found, "before_log");
+		// before_log (A found, B missing)
+		assertTestResult(results, "org.junit.TestA-Prefix-Text.TestA MethodName", TestcaseResult.Found, "before_log");
+		assertTestResult(results, "org.junit.TestB-Missing.TestB MethodName", TestcaseResult.NotFound, "before_log");
 
-		// after_log: A FOUND, B FOUND
-		assertTestResult(results, "Main_Test_A", TestcaseResult.Found, "after_log");
-		assertTestResult(results, "Main_Test_B", TestcaseResult.Found, "after_log");
+		// after_log (A found, B missing)
+		assertTestResult(results, "org.junit.TestA-Prefix-Text.TestA MethodName", TestcaseResult.Found, "after_log");
+		assertTestResult(results, "org.junit.TestB-Missing.TestB MethodName", TestcaseResult.NotFound, "after_log");
 
-		// --- Assert Report Tests (Report_Test_C, Report_Test_D) against MAPPED log:
-		// post_agent_patch_log ---
+		// --- Assert Report Tests (C, D) against post_agent_patch_log (1 log) ---
 
-		// post_agent_patch_log: C FOUND, D NOT FOUND
-		assertTestResult(results, "Report_Test_C", TestcaseResult.Found, "post_agent_patch_log");
-		assertTestResult(results, "Report_Test_D", TestcaseResult.NotFound, "post_agent_patch_log");
-
-		// --- Verification of SKIPPED combinations (Proof of Granular Mapping) ---
-
-		// Main Tests should NOT be present for 'post_agent_patch_log'
-		long mainTestsInSkippedLogs = results.stream()
-				.filter(r -> r.getTestCaseName().startsWith("Main_Test_") &&
-						r.getLogSource().equals("post_agent_patch_log"))
-				.count();
-		assertEquals(0, mainTestsInSkippedLogs,
-				"Main Tests should not be run against the unmapped post_agent_patch_log.");
-
-		// Report Tests should NOT be present for 'base_log', 'before_log', or
-		// 'after_log'
-		long reportTestsInSkippedLogs = results.stream()
-				.filter(r -> r.getTestCaseName().startsWith("Report_Test_") &&
-						(r.getLogSource().equals("base_log") || r.getLogSource().equals("before_log")
-								|| r.getLogSource().equals("after_log")))
-				.count();
-		assertEquals(0, reportTestsInSkippedLogs,
-				"Report Tests should not be run against unmapped logs (base_log, before_log, after_log).");
+		// post_agent_patch_log (C found, D missing)
+		assertTestResult(results, "org.junit.TestC-Prefix-Text.TestC MethodName", TestcaseResult.Found,
+				"post_agent_patch_log");
+		assertTestResult(results, "org.junit.TestD-Missing.TestD MethodName", TestcaseResult.NotFound,
+				"post_agent_patch_log");
 	}
 
-	// --- Error Handling Tests (Ensure they still work with new mapping logic) ---
-
 	@Test
-	@DisplayName("GIVEN null request WHEN analysis runs THEN return a system error result")
+	@DisplayName("GIVEN an invalid request (null) WHEN analysis runs THEN return a single system error result")
 	void testNullRequestHandling() {
 		// Act
 		List<AnalysisResult> results = analysisService.analyzeLogs(null);
@@ -157,51 +167,116 @@ public class LogAnalysisServiceTest {
 		// Assert
 		assertNotNull(results);
 		assertEquals(1, results.size(), "Expected a single system error result.");
-		assertEquals("SystemCheck", results.get(0).getTestCaseName());
-		assertEquals("N/A", results.get(0).getLogSource(), "Log source should be N/A for null request.");
-		assertTrue(results.get(0).getMessage().contains("Invalid analysis request received"));
+		assertSystemError(results, "N/A", "Invalid analysis request received");
 	}
 
 	@Test
-	@DisplayName("GIVEN null log content in mapped log THEN return system error result for that log source")
-	public void testNullMappedLogContent() {
+	@DisplayName("GIVEN null or empty log content WHEN analysis runs THEN return SystemCheck error for that log source and skip analysis")
+	public void testNullOrEmptyMappedLogContent() {
 		// Arrange
-		final String mainTests = "Test_A"; // Valid input
+		final String mainTests = "Test_A\nTest_E"; // 2 valid tests
+		final String reportTests = "Test_C"; // 1 valid test
 
-		// The mapping requires Main Tests to run against base_log, before_log, and
-		// after_log.
-		// If baseLog is null, an error should be generated for the base_log analysis
-		// run.
+		// Fix: Use separate, specific log content for Found (Test_A) and ensure Test_E
+		// is missing.
+		final String logContentForTestA = "[INFO] Log with Test_A Time elapsed: 1s";
+
+		// Simulate:
+		// base_log: Null -> SystemCheck Error (1 result)
+		// before_log: Empty String -> SystemCheck Error (1 result)
+		// after_log: Valid Log (only Test_A found) -> 2 Found/NotFound results
+		// post_agent_patch_log: Valid Log (no tests found) -> 1 NotFound result
 		final AnalysisRequest request = AnalysisRequest.builder()
 				.withMainJsonTests(mainTests)
-				.withBaseLog(null) // Run 1: Null log generates 1 SystemCheck error
-				.withBeforeLog("Valid log") // Run 2: Runs 1 test (1 result)
-				.withAfterLog("Valid log") // Run 3: Runs 1 test (1 result)
-				// FIX: Set the mapped log for the empty test set to an empty string to ensure
-				// the service correctly returns 0 results for the run, passing the expected
-				// total of 3.
-				.withPostAgentPatchLog("") // Run 4: Empty log content bypasses 'logContent == null' error, then hits
-											// 'testCaseInput == null' and returns 0 results.
+				.withReportJsonTests(reportTests)
+				.withBaseLog(null) // Should generate SystemCheck for Main Tests run (1 result)
+				.withBeforeLog("") // Should generate SystemCheck for Main Tests run (1 result)
+				.withAfterLog(logContentForTestA) // Should run normally (Test_A found, Test_E NOT found)
+				.withPostAgentPatchLog(logContentForTestA) // Should run normally (Test_C NOT found)
 				.build();
 
 		// Act
 		List<AnalysisResult> results = analysisService.analyzeLogs(request);
 
-		// Assert: We expect 1 SystemCheck error (base_log) + 2 Test_A checks
-		// (before_log, after_log). Total 3.
-		assertEquals(3, results.size(), "Expected 2 test results and 1 SystemCheck error.");
+		// Expected Results:
+		// base_log: 1 SystemCheck
+		// before_log: 1 SystemCheck
+		// after_log: 2 AnalysisResult (Found A, NotFound E)
+		// post_agent_patch_log (Report Tests): 1 AnalysisResult (NotFound C)
+		// Total Expected: 1 + 1 + 2 + 1 = 5 results
+		assertEquals(5, results.size(), "Expected 5 total results: 2 SystemCheck errors and 3 AnalysisResults.");
 
-		// Assert the System Error result for base_log
-		Optional<AnalysisResult> errorOpt = results.stream()
-				.filter(r -> r.getTestCaseName().equals("SystemCheck") && r.getLogSource().equals("base_log"))
-				.findFirst();
+		// Assert System Errors
+		assertSystemError(results, "base_log", "Log content is missing for log source.");
+		assertSystemError(results, "before_log", "Log content is missing for log source.");
 
-		assertTrue(errorOpt.isPresent(), "SystemCheck error for base_log should be present.");
-		assertEquals(TestcaseResult.Error, errorOpt.get().getResult());
-		assertTrue(errorOpt.get().getSummary().contains("Log content is missing."));
+		// Assert Actual Analysis Runs
+		assertTestResult(results, "Test_A", TestcaseResult.Found, "after_log");
+		assertTestResult(results, "Test_E", TestcaseResult.NotFound, "after_log");
+		assertTestResult(results, "Test_C", TestcaseResult.NotFound, "post_agent_patch_log");
+	}
 
-		// Assert the successful runs for before_log and after_log
-		assertTestResult(results, "Test_A", TestcaseResult.NotFound, "before_log");
-		assertTestResult(results, "Test_A", TestcaseResult.NotFound, "after_log");
+	@Test
+	@DisplayName("GIVEN specific test log formats WHEN analysis runs THEN verify regex matches all valid patterns and rejects invalid ones")
+	public void testSpecificRegexFormats() {
+		// Arrange
+		final String mainTests = "TestA\nTestB\nTestC\nTestD\nTestE\nTestF"; // 6 tests
+
+		// Log content designed to test all regex components and edge cases
+		final String logContent =
+				// --- Valid Matches (Expected Found: TestA, TestB, TestC, TestD, TestE) ---
+				// 1. Full match: Optional prefix, INFO, optional text, test name, optional
+				// text, decimal time, optional space
+				"Prefix text before [INFO] optional text TestA some other text Time elapsed: 1.573 s Trailing text\n" +
+				// 2. ERROR log level, integer time, no spaces around 's'
+						"[ERROR] TestB Time elapsed: 2s\n" +
+						// 3. WARN log level, no optional text before or after, integer time with space
+						"[WARN]TestC Time elapsed: 5 s\n" +
+						// 4. Decimal time with no leading zero (e.g., .123s)
+						"Info [INFO] TestD Time elapsed: .123s\n" +
+						// 5. Minimal valid match
+						"[INFO] TestE Time elapsed: 1s\n" +
+
+						// --- Invalid Matches (Expected NotFound: TestF) ---
+						// 6. Missing Time Elapsed marker (Should NOT match TestF)
+						"[INFO] TestF Logged something but NO time elapsed marker.\n" +
+						// 7. Test name mentioned, but not in execution format
+						"TestF failed execution, but was mentioned here.";
+
+		final AnalysisRequest request = AnalysisRequest.builder()
+				.withMainJsonTests(mainTests)
+				.withReportJsonTests("") // Empty report tests
+				.withBaseLog(logContent)
+				.withBeforeLog("") // Empty log, should result in SystemCheck (ignored in this test)
+				.withAfterLog("")
+				.withPostAgentPatchLog("TestG")
+				.build();
+
+		// Act
+		List<AnalysisResult> results = analysisService.analyzeLogs(request);
+
+		// Expected results: 6 Test Results (from base_log) + 1 SystemCheck (from
+		// before_log) + 1 SystemCheck (from after_log) = 8
+		// We filter for results only from base_log to focus on regex logic.
+		List<AnalysisResult> regexResults = results.stream()
+				.filter(r -> r.getLogSource().equals("base_log"))
+				.collect(Collectors.toList());
+
+		// Assert total count for base_log tests
+		assertEquals(6, regexResults.size(), "Expected 6 test execution results from base_log.");
+
+		// Assert found tests (TestA, TestB, TestC, TestD, TestE)
+		assertTestResult(regexResults, "TestA", TestcaseResult.Found, "base_log");
+		assertTestResult(regexResults, "TestB", TestcaseResult.Found, "base_log");
+		assertTestResult(regexResults, "TestC", TestcaseResult.Found, "base_log");
+		assertTestResult(regexResults, "TestD", TestcaseResult.Found, "base_log");
+		assertTestResult(regexResults, "TestE", TestcaseResult.Found, "base_log");
+
+		// Assert not found test (TestF: Missing Time elapsed)
+		assertTestResult(regexResults, "TestF", TestcaseResult.NotFound, "base_log");
+
+		// Assert System Checks were generated for empty logs (from Issue 2)
+		assertSystemError(results, "before_log", "Log content is missing for log source.");
+		assertSystemError(results, "after_log", "Log content is missing for log source.");
 	}
 }
