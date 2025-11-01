@@ -3,159 +3,178 @@ package com.loganalyzer.service;
 import com.loganalyzer.data.AnalysisRequest;
 import com.loganalyzer.data.AnalysisResult;
 import com.loganalyzer.data.TestcaseResult;
-import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Service;
 
 /**
- * Core business logic service for analyzing multiple log files against two distinct sets of test cases.
- *
- * Implements case-insensitive matching and enforces the granular mapping rules (Issue 2)
- * using a strict Regex pattern to confirm test execution (Issue 3).
+ * Service responsible for analyzing log content against defined test cases.
+ * It uses granular mapping to select relevant logs/tests and regex to verify execution status.
  */
-@Service
+@Service // Annotate the class as a Spring Service Bean
 public class LogAnalysisService {
 
-    private static final String SYSTEM_CHECK_NAME = "SystemCheck";
-    private static final String INVALID_REQUEST_MSG = "Invalid analysis request received (request object is null).";
-    private static final String NO_LOG_CONTENT_MSG = "Log content is missing for log source.";
+    // Regex to verify the test case execution signature (Log level, Test name, and Time elapsed marker).
+    // Pattern: (Optional prefix) [LEVEL] (Optional text) (Test Name) (Optional text) Time elapsed: X s (Optional text/suffix)
+    private static final String EXECUTION_PATTERN_TEMPLATE =
+            ".*?\\[(INFO|ERROR|WARN|DEBUG|TRACE)]\\s.*?%s.*?Time elapsed:\\s*(\\d*\\.?\\d+|\\.\\d+)\\s*s.*";
+
+    // Regex to verify if the executed test ended in a failure or error.
+    // Pattern: (Optional text) <<< (or << or <) (FAILURE! or ERROR!)
+    private static final Pattern FAILURE_SUFFIX_PATTERN =
+            Pattern.compile("(<{1,3})\\s(FAILURE|ERROR)!", Pattern.CASE_INSENSITIVE);
+
 
     /**
-     * Orchestrates the analysis based on the granular mapping rules:
-     * 1. Main JSON Tests run against base_log, before_log, and after_log.
-     * 2. Report JSON Tests run against post_agent_patch_log only.
-     *
-     * @param request The {@link AnalysisRequest} containing the four logs and two test lists.
-     * @return A consolidated list of {@link AnalysisResult} for all executed checks.
+     * Entry point for log analysis, handling request validation and dispatching analysis tasks.
+     * @param request The analysis request containing log content and test sets.
+     * @return A list of AnalysisResult objects.
      */
     public List<AnalysisResult> analyzeLogs(AnalysisRequest request) {
-        final List<AnalysisResult> results = new ArrayList<>();
-
         if (request == null) {
-            results.add(new AnalysisResult(SYSTEM_CHECK_NAME, TestcaseResult.Error, INVALID_REQUEST_MSG, "N/A"));
-            return results;
+            return Collections.singletonList(createSystemErrorResult("N/A", "Invalid analysis request received (Request is null)."));
         }
 
-        // --- 1. Main JSON Tests (base_log, before_log, after_log) ---
-        results.addAll(executeAnalysisForTestSet(request.getMainJsonTests(), request.getBaseLog(), "base_log", "main_json_tests"));
-        results.addAll(executeAnalysisForTestSet(request.getMainJsonTests(), request.getBeforeLog(), "before_log", "main_json_tests"));
-        results.addAll(executeAnalysisForTestSet(request.getMainJsonTests(), request.getAfterLog(), "after_log", "main_json_tests"));
+        List<AnalysisResult> allResults = new ArrayList<>();
 
-        // --- 2. Report JSON Tests (post_agent_patch_log only) ---
-        results.addAll(executeAnalysisForTestSet(request.getReportJsonTests(), request.getPostAgentPatchLog(), "post_agent_patch_log", "report_json_tests"));
+        // --- Granular Mapping Logic ---
 
+        // 1. Main Tests (Mapped to base, before, and after logs)
+        if (hasTestCases(request.getMainJsonTests())) {
+            List<String> mainTests = parseTestCases(request.getMainJsonTests());
+
+            allResults.addAll(executeAnalysisForTestSet(mainTests, request.getBaseLog(), "base_log"));
+            allResults.addAll(executeAnalysisForTestSet(mainTests, request.getBeforeLog(), "before_log"));
+            allResults.addAll(executeAnalysisForTestSet(mainTests, request.getAfterLog(), "after_log"));
+        }
+
+        // 2. Report Tests (Mapped only to post-agent patch log)
+        if (hasTestCases(request.getReportJsonTests())) {
+            List<String> reportTests = parseTestCases(request.getReportJsonTests());
+            allResults.addAll(executeAnalysisForTestSet(reportTests, request.getPostAgentPatchLog(), "post_agent_patch_log"));
+        }
+
+        return allResults;
+    }
+
+    /**
+     * Executes the analysis for a specific set of tests against a single log content source.
+     * @param testCases List of test case names to check.
+     * @param logContent The log file content string.
+     * @param logSource Identifier for the log (e.g., "base_log").
+     * @return List of results for this run, or a SystemCheck error if the log is missing/empty.
+     */
+    private List<AnalysisResult> executeAnalysisForTestSet(List<String> testCases, String logContent, String logSource) {
+        // Issue 2 & 3 Fix: Immediately return a SystemCheck error if the log is null or empty, preventing incorrect results.
+        if (logContent == null || logContent.trim().isEmpty()) {
+            return Collections.singletonList(createSystemErrorResult(logSource, "Log content is missing for log source."));
+        }
+
+        List<AnalysisResult> results = new ArrayList<>();
+        // Note: logContent is NOT case-sensitive for the search, but the regex patterns are compiled case-sensitive by default.
+        String normalizedLogContent = logContent;
+
+        for (String testCaseName : testCases) {
+            // Step 1: Check if the test executed (Found) using a dynamically compiled regex.
+            Pattern executionPattern = Pattern.compile(String.format(EXECUTION_PATTERN_TEMPLATE, Pattern.quote(testCaseName)), Pattern.CASE_INSENSITIVE);
+            Matcher executionMatcher = executionPattern.matcher(normalizedLogContent);
+
+            if (executionMatcher.find()) {
+                // Step 2: Test Ran (Found) - Determine status (Passed or Failed)
+                String matchedLine = executionMatcher.group(0);
+
+                Matcher failureMatcher = FAILURE_SUFFIX_PATTERN.matcher(matchedLine);
+
+                if (failureMatcher.find()) {
+                    // Test ran AND contains a failure/error suffix
+                    results.add(createResult(testCaseName, TestcaseResult.Failed, logSource));
+                } else {
+                    // Test ran BUT does NOT contain a failure/error suffix
+                    // This includes Passed, Empty, Skipped, Standard_Err statuses (all map to Passed)
+                    results.add(createResult(testCaseName, TestcaseResult.Passed, logSource));
+                }
+            } else {
+                // Step 3: Test Did Not Run (NotFound)
+                results.add(createResult(testCaseName, TestcaseResult.NotFound, logSource));
+            }
+        }
         return results;
     }
 
     /**
-     * Executes a single analysis task for a given test set against one log file.
-     * Uses a strict regex to verify test execution.
+     * Parses the test cases string (JSON format simplified to newline-separated names) into a list.
+     * @param jsonTestCases String of test case names.
+     * @return List of test case names.
      */
-    private List<AnalysisResult> executeAnalysisForTestSet(String testCaseInput, String logContent, String logSource, String testSetName) {
-        List<AnalysisResult> taskResults = new ArrayList<>();
-
-        if (testCaseInput == null || testCaseInput.trim().isEmpty()) {
-            // If no tests are provided, we return an empty list.
-            return List.of();
+    private List<String> parseTestCases(String jsonTestCases) {
+        if (jsonTestCases == null || jsonTestCases.trim().isEmpty()) {
+            return Collections.emptyList();
         }
-
-        if (logContent == null || logContent.trim().isEmpty()) {
-             // If log content is missing or empty, return a SystemCheck error for that source.
-             taskResults.add(new AnalysisResult(SYSTEM_CHECK_NAME, TestcaseResult.Error, NO_LOG_CONTENT_MSG, logSource));
-             return taskResults;
-        }
-
-        List<String> testCaseNames = splitInput(testCaseInput);
-        if (testCaseNames.isEmpty()) {
-            return List.of();
-        }
-
-        // Pre-process the entire log file to lower case once for efficiency
-        final String lowerCaseLog = logContent.toLowerCase();
-
-        for (String testName : testCaseNames) {
-            String cleanTestName = cleanString(testName);
-            if (cleanTestName.isEmpty()) continue;
-
-            // Generate the regex pattern for the specific test case name.
-            String regexPattern = buildTestExecutionRegex(cleanTestName);
-
-            // Compile the pattern with case-insensitive flag
-            Pattern pattern = Pattern.compile(regexPattern, Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-            Matcher matcher = pattern.matcher(lowerCaseLog);
-
-            boolean found = matcher.find();
-            TestcaseResult result = found ? TestcaseResult.Found : TestcaseResult.NotFound;
-
-            // Generate the final result object
-            taskResults.add(new AnalysisResult(cleanTestName, result, null, logSource));
-        }
-
-        return taskResults;
-    }
-
-    /**
-     * Constructs the complex regex pattern to strictly verify test execution.
-     *
-     * Pattern guidelines implemented:
-     * 1. (.*?) - Optional text before the log level, non-greedy.
-     * 2. (\\[INFO\\]|\\[ERROR\\]|\\[WARN\\]) - Exact log level marker (INFO, ERROR, or WARN).
-     * 3. (.*?) - Optional text after log level, non-greedy.
-     * 4. Pattern.quote(testName) - The actual test name string.
-     * 5. (.*?) - Optional text till the time elapsed marker.
-     * 6. Time elapsed: [0-9]+\\.?[0-9]*\\s*s - Strictly enforces the time marker (1.573 s, 2s, 10 s).
-     * 7. (.*) - Optional text till end of line.
-     *
-     * @param testName The specific test case name to look for.
-     * @return The complete regex pattern string.
-     */
-    private String buildTestExecutionRegex(String testName) {
-        // Step 1 & 2: Optional prefix text followed by a log level.
-        String logMarker = ".*?(?:\\[INFO\\]|\\[ERROR\\]|\\[WARN\\])";
-
-        // Step 3 & 4: Optional text, then the required test name (quoted to escape regex chars).
-        // Using .*? for the optional text between log level and test name.
-        String testNameMarker = ".*?" + Pattern.quote(testName);
-
-        // Step 5 & 6: Optional text, then the strict "Time elapsed" marker.
-        // Time format: 1.573 s or 2s (decimal or integer, optional space before 's').
-        String timeMarker = ".*?Time elapsed:\\s*\\d+\\.?\\d*\\s*s";
-
-        // Step 7: Optional trailing text.
-        String trailingText = ".*";
-
-        // Combining the entire pattern
-        return logMarker + testNameMarker + timeMarker + trailingText;
-    }
-
-
-    /**
-     * Splits a multi-line/comma-separated input string into a list of clean test case names.
-     */
-    private List<String> splitInput(String input) {
-        if (input == null || input.trim().isEmpty()) {
-            return List.of();
-        }
-
-        // Replace all delimiters with a single comma, then split, trim, and filter out empty entries.
-        String cleanedInput = input.replaceAll("[\\n\\r;,]", ",");
-
-        return Arrays.stream(cleanedInput.split(","))
+        return jsonTestCases.lines()
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
     }
 
     /**
-     * Cleans up the test case name by trimming whitespace.
+     * Checks if the test case string is present and non-empty.
      */
-    private String cleanString(String input) {
-        return input != null ? input.trim() : "";
+    private boolean hasTestCases(String jsonTestCases) {
+        return jsonTestCases != null && !jsonTestCases.trim().isEmpty();
     }
 
+    // --- Result Builders ---
+
+    private AnalysisResult createResult(String testCaseName, TestcaseResult result, String logSource) {
+        String message;
+        String status;
+        String resultType;
+
+        switch (result) {
+            case Passed:
+                message = "Passed";
+                status = "OK";
+                resultType = "Passed";
+                break;
+            case Failed:
+                message = "Failed";
+                status = "NOT OK";
+                resultType = "Failed";
+                break;
+            case NotFound:
+            case None: // Should not happen in final output, but handle defensively
+            default:
+                message = "Not Found";
+                status = "NOT OK";
+                resultType = "Not Found";
+                break;
+        }
+
+        String summary = String.format("%s [%s]: %s (%s)", testCaseName, logSource, status, resultType);
+
+        return AnalysisResult.builder()
+                .withTestCaseName(testCaseName)
+                .withResult(result)
+                .withMessage(message)
+                .withLogSource(logSource)
+                .withSummary(summary)
+                .build();
+    }
+
+    private AnalysisResult createSystemErrorResult(String logSource, String errorMessage) {
+        String summary = String.format("SystemCheck [%s]: ERROR (%s)", logSource, errorMessage);
+
+        return AnalysisResult.builder()
+                .withTestCaseName("SystemCheck")
+                .withResult(TestcaseResult.Error)
+                .withMessage(errorMessage)
+                .withLogSource(logSource)
+                .withSummary(summary)
+                .build();
+    }
 }

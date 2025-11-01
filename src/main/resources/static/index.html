@@ -139,19 +139,28 @@
                         const li = document.createElement('li');
                         li.className = 'p-2 rounded-lg text-sm transition duration-150 ease-in-out flex justify-between items-center';
 
-                        const isOk = result.result === 'Found';
-                        const isError = result.result === 'Error';
-
+                        const status = result.result; // Found, Failed, NotFound, Error
                         let statusText = result.summary;
                         let statusClass = 'bg-gray-100 text-gray-800';
-
-                        if (isOk) {
+                        
+                        // Map result -> display text
+                        if (status === 'Passed') {
+                            // OK (Passed)
+                            statusText = statusText.replace("OK (Found)", "OK (Passed)");
                             statusClass = 'bg-green-100 text-green-800 font-medium';
-                        } else if (isError) {
-                            statusClass = 'bg-red-200 text-red-900 font-bold';
-                        } else {
+                        } 
+                        else if (status === 'Failed') {
+                            // OK (Failed)
+                            statusText = statusText.replace("OK (Failed)", "OK (Failed)");
+                            statusClass = 'bg-orange-100 text-orange-800 font-semibold'; // orange
+                        } 
+                        else if (status === 'NotFound') {
                             // NOT OK (NotFound)
-                            statusClass = 'bg-yellow-100 text-yellow-800 font-medium';
+                            statusText = statusText.replace("NOT OK (NotFound)", "NOT OK (NotFound)");
+                            statusClass = 'bg-red-200 text-red-900 font-bold'; // red
+                        } 
+                        else if (status === 'Error') {
+                            statusClass = 'bg-red-300 text-red-900 font-bold'; // system error
                         }
                         
                         li.className += ' ' + statusClass;
@@ -167,12 +176,12 @@
         
         // Populate placeholder content for demonstration
         window.onload = () => {
-             document.getElementById('base_log').value = "Starting up service...\nFound TestA in base log\nSkipping TestD.";
-             document.getElementById('before_log').value = "Service running.\nTestB started.\nTestC failed to execute.";
-             document.getElementById('after_log').value = "Found TestA in after log\nTestB success.";
-             document.getElementById('post_agent_patch_log').value = "Agent patch applied.\nFound ReportTestD\nAgent shutdown successful.";
-             document.getElementById('main_json_tests').value = "TestA\nTestB\nTestC";
-             document.getElementById('report_json_tests').value = "ReportTestD\nReportTestE";
+             document.getElementById('base_log').value = "2023-10-27 INFO Some optional prefix text [INFO] Another optional text org.junit.TestA-Prefix-Text.TestA MethodName Time elapsed: 1.573 s Some optional text\n2023-10-27 INFO Should not match this line as it has no time elapsed.\n2023-10-27 INFO [INFO] org.junit.TestC-Prefix-Text.TestC MethodName -- Time elapsed: 2 s";
+             document.getElementById('before_log').value = "2023-10-27 INFO Some optional prefix text [INFO] Another optional text org.junit.TestB-Missing.TestB MethodName Time elapsed: 1.573 s Some optional text << ERROR!\n2023-10-27 INFO Should not match this line as it has no time elapsed.\n2023-10-27 INFO [INFO] org.junit.TestC-Prefix-Text.TestC MethodName -- Time elapsed: 2s";
+             document.getElementById('after_log').value = "2023-10-27 INFO Some optional prefix text [INFO] Another optional text org.junit.TestA-Prefix-Text.TestA MethodName Time elapsed: 1.573 s Some optional text\n2023-10-27 INFO Should not match this line as it has no time elapsed.\n2023-10-27 INFO [INFO] org.junit.TestC-Prefix-Text.TestC MethodName -- Time elapsed: 2.0005 s";
+             document.getElementById('post_agent_patch_log').value = "2023-10-27 INFO Some optional prefix text [INFO] Another optional text org.junit.TestA-Prefix-Text.TestA MethodName Time elapsed: 1.573 s Some optional text\n2023-10-27 INFO Should not match this line as it has no time elapsed.\n2023-10-27 INFO [INFO] org.junit.TestC-Prefix-Text.TestC MethodName -- Time elapsed: 2.0005 s << FAILURE!";
+             document.getElementById('main_json_tests').value = "org.junit.TestA-Prefix-Text.TestA MethodName\norg.junit.TestB-Missing.TestB MethodName";
+             document.getElementById('report_json_tests').value = "org.junit.TestC-Prefix-Text.TestC MethodName\norg.junit.TestD-Missing.TestD MethodName";
         };
 
     </script>
